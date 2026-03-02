@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>GuestList</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,500;0,9..40,700;1,9..40,300&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0b;
+      --surface: #141416;
+      --surface-2: #1c1c20;
+      --surface-3: #252529;
+      --border: #2a2a30;
+      --text: #e8e8ec;
+      --text-dim: #8888a0;
+      --text-faint: #55556a;
+      --accent: #c8ff3e;
+      --accent-dim: #a0cc32;
+      --vip: #ffd700;
+      --danger: #ff4466;
+      --success: #3eff8b;
+      --checked-in-bg: rgba(62, 255, 139, 0.06);
+      --radius: 12px;
+      --radius-sm: 8px;
+      --font: 'DM Sans', -apple-system, sans-serif;
+      --mono: 'Space Mono', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ---- LAYOUT ---- */
+    .app { max-width: 520px; margin: 0 auto; padding: 0 16px; min-height: 100vh; }
+
+    /* ---- HEADER ---- */
+    .header {
+      padding: 24px 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+    .logo {
+      font-family: var(--mono);
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: -0.5px;
+    }
+    .nav-tabs {
+      display: flex;
+      gap: 4px;
+    }
+    .nav-tab {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-family: var(--font);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 6px 12px;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .nav-tab:hover { border-color: var(--text-dim); color: var(--text); }
+    .nav-tab.active {
+      background: var(--accent);
+      color: var(--bg);
+      border-color: var(--accent);
+    }
+
+    /* ---- STATS BAR ---- */
+    .stats-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+    .stat-card {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 12px;
+      text-align: center;
+    }
+    .stat-number {
+      font-family: var(--mono);
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--text);
+    }
+    .stat-number.accent { color: var(--accent); }
+    .stat-number.vip { color: var(--vip); }
+    .stat-label {
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--text-dim);
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* ---- SEARCH ---- */
+    .search-container { position: relative; margin-bottom: 16px; }
+    .search-input {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px 14px 44px;
+      font-family: var(--font);
+      font-size: 16px;
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .search-input::placeholder { color: var(--text-faint); }
+    .search-input:focus { border-color: var(--accent); }
+    .search-icon {
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-faint);
+      font-size: 16px;
+    }
+    .search-count {
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-faint);
+    }
+
+    /* ---- FILTER TABS ---- */
+    .filter-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 14px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .filter-tab {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-family: var(--font);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 5px 12px;
+      border-radius: 16px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .filter-tab:hover { border-color: var(--text-dim); }
+    .filter-tab.active {
+      background: var(--surface-3);
+      border-color: var(--text-dim);
+      color: var(--text);
+    }
+
+    /* ---- GUEST LIST ---- */
+    .guest-list { display: flex; flex-direction: column; gap: 4px; padding-bottom: 100px; }
+
+    .guest-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.15s;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .guest-row:hover { background: var(--surface-2); }
+    .guest-row:active { transform: scale(0.99); }
+    .guest-row.checked-in {
+      background: var(--checked-in-bg);
+      border-color: rgba(62, 255, 139, 0.15);
+    }
+    .guest-row.duplicate {
+      border-color: rgba(255, 68, 102, 0.3);
+    }
+
+    .check-circle {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.2s;
+      font-size: 14px;
+    }
+    .guest-row.checked-in .check-circle {
+      background: var(--success);
+      border-color: var(--success);
+      color: var(--bg);
+    }
+
+    .guest-info { flex: 1; min-width: 0; }
+    .guest-name {
+      font-size: 15px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .guest-row.checked-in .guest-name { color: var(--success); }
+    .guest-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 2px;
+    }
+    .guest-tag {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .tag-vip { background: rgba(255, 215, 0, 0.15); color: var(--vip); }
+    .tag-plus { background: rgba(200, 255, 62, 0.1); color: var(--accent-dim); }
+    .tag-dup { background: rgba(255, 68, 102, 0.12); color: var(--danger); }
+    .guest-note { font-size: 11px; color: var(--text-faint); }
+    .guest-time {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-faint);
+      flex-shrink: 0;
+    }
+
+    /* ---- PIN SCREEN ---- */
+    .pin-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 80vh;
+      text-align: center;
+    }
+    .pin-screen h1 {
+      font-family: var(--mono);
+      font-size: 24px;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+    .pin-screen p { color: var(--text-dim); margin-bottom: 32px; font-size: 14px; }
+    .pin-dots {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    .pin-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      transition: all 0.15s;
+    }
+    .pin-dot.filled {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    .pin-keypad {
+      display: grid;
+      grid-template-columns: repeat(3, 72px);
+      gap: 12px;
+    }
+    .pin-key {
+      width: 72px;
+      height: 56px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .pin-key:hover { background: var(--surface-2); }
+    .pin-key:active { transform: scale(0.95); background: var(--surface-3); }
+    .pin-key.backspace { font-size: 16px; }
+    .pin-error {
+      color: var(--danger);
+      font-size: 13px;
+      margin-top: 16px;
+      min-height: 20px;
+    }
+
+    /* ---- EVENT SELECTOR ---- */
+    .event-selector {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 80vh;
+      text-align: center;
+    }
+    .event-selector h1 {
+      font-family: var(--mono);
+      font-size: 22px;
+      color: var(--accent);
+      margin-bottom: 24px;
+    }
+    .event-cards { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 400px; }
+    .event-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: left;
+    }
+    .event-card:hover { border-color: var(--accent); background: var(--surface-2); }
+    .event-card h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+    .event-card .event-date { font-size: 12px; color: var(--text-dim); }
+    .event-card .event-status {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-top: 8px;
+    }
+    .event-card .event-status.active { background: rgba(62, 255, 139, 0.1); color: var(--success); }
+
+    /* ---- ADMIN ---- */
+    .admin-section {
+      margin-bottom: 32px;
+    }
+    .admin-section h2 {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
+    .admin-form {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .admin-input {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      font-family: var(--font);
+      font-size: 14px;
+      color: var(--text);
+      outline: none;
+    }
+    .admin-input:focus { border-color: var(--accent); }
+    .admin-input::placeholder { color: var(--text-faint); }
+    .btn {
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      border-radius: var(--radius-sm);
+      padding: 10px 18px;
+      font-family: var(--font);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:active { transform: scale(0.97); }
+    .btn.btn-sm { padding: 6px 12px; font-size: 11px; }
+    .btn.btn-danger { background: var(--danger); color: white; }
+    .btn.btn-ghost {
+      background: transparent;
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+    }
+
+    .admin-list-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-bottom: 4px;
+    }
+    .admin-list-item .name { font-size: 14px; font-weight: 500; }
+    .admin-list-item .detail { font-size: 12px; color: var(--text-dim); }
+
+    /* ---- EMPTY STATE ---- */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-faint);
+    }
+    .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+    .empty-state p { font-size: 14px; line-height: 1.5; }
+
+    /* ---- ANIMATIONS ---- */
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .guest-row { animation: slideUp 0.2s ease-out; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .loading { animation: pulse 1.5s infinite; color: var(--text-dim); text-align: center; padding: 40px; }
+
+    /* ---- RESPONSIVE ---- */
+    @media (max-width: 380px) {
+      .stat-number { font-size: 22px; }
+      .pin-keypad { grid-template-columns: repeat(3, 64px); gap: 8px; }
+      .pin-key { width: 64px; height: 48px; font-size: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.5/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    // ============================================================
+    // CONFIG - UPDATE THIS WITH YOUR ACTUAL VALUES
+    // ============================================================
+    const CONFIG = {
+      API_URL: "https://guestlist-app-production.up.railway.app",
+      SUPABASE_URL: "https://wzdqwrckzeletieemiff.supabase.co",
+      SUPABASE_ANON_KEY: "sb_publishable_wYlMVDSJJWKEnUxIus7inQ_1gCTfEo8",
+    };
+
+    // ============================================================
+    // SIMPLE SUPABASE REALTIME (using EventSource/polling fallback)
+    // For production, use the Supabase JS client
+    // ============================================================
+    function usePolling(url, interval = 3000) {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+
+      const fetchData = useCallback(async () => {
+        try {
+          const res = await fetch(url);
+          const json = await res.json();
+          setData(json);
+          setLoading(false);
+        } catch (err) {
+          console.error("Polling error:", err);
+        }
+      }, [url]);
+
+      useEffect(() => {
+        fetchData();
+        const id = setInterval(fetchData, interval);
+        return () => clearInterval(id);
+      }, [fetchData, interval]);
+
+      return { data, loading, refetch: fetchData };
+    }
+
+    // ============================================================
+    // PIN ENTRY SCREEN
+    // ============================================================
+    function PinScreen({ eventId, onSuccess }) {
+      const [pin, setPin] = useState("");
+      const [error, setError] = useState("");
+      const [shaking, setShaking] = useState(false);
+
+      const handleKey = async (key) => {
+        setError("");
+        if (key === "back") {
+          setPin((p) => p.slice(0, -1));
+          return;
+        }
+        const newPin = pin + key;
+        setPin(newPin);
+
+        if (newPin.length >= 4) {
+          try {
+            const res = await fetch(`${CONFIG.API_URL}/api/events/${eventId}/verify-pin`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pin: newPin }),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              onSuccess(data.event_name);
+            } else {
+              setError("Wrong PIN");
+              setPin("");
+              setShaking(true);
+              setTimeout(() => setShaking(false), 500);
+            }
+          } catch {
+            setError("Connection error");
+            setPin("");
+          }
+        }
+      };
+
+      return (
+        <div className="pin-screen">
+          <h1>GUESTLIST</h1>
+          <p>Enter the event PIN to access check-in</p>
+          <div className="pin-dots" style={shaking ? { animation: "shake 0.3s" } : {}}>
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className={`pin-dot ${i < pin.length ? "filled" : ""}`} />
+            ))}
+          </div>
+          <div className="pin-keypad">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, null, 0, "back"].map((key, i) =>
+              key === null ? <div key={i} /> : (
+                <button
+                  key={i}
+                  className={`pin-key ${key === "back" ? "backspace" : ""}`}
+                  onClick={() => handleKey(key === "back" ? "back" : String(key))}
+                >
+                  {key === "back" ? "⌫" : key}
+                </button>
+              )
+            )}
+          </div>
+          <div className="pin-error">{error}</div>
+        </div>
+      );
+    }
+
+    // ============================================================
+    // EVENT SELECTOR SCREEN
+    // ============================================================
+    function EventSelector({ onSelect }) {
+      const { data: events, loading } = usePolling(`${CONFIG.API_URL}/api/events`, 10000);
+
+      if (loading) return <div className="loading">Loading events...</div>;
+
+      const activeEvents = (events || []).filter((e) => e.is_active);
+
+      return (
+        <div className="event-selector">
+          <h1>SELECT EVENT</h1>
+          <div className="event-cards">
+            {activeEvents.length === 0 ? (
+              <div className="empty-state">
+                <div className="icon">📅</div>
+                <p>No active events. Create one in the admin dashboard.</p>
+              </div>
+            ) : (
+              activeEvents.map((event) => (
+                <div key={event.id} className="event-card" onClick={() => onSelect(event.id)}>
+                  <h3>{event.name}</h3>
+                  {event.date && <div className="event-date">{new Date(event.date).toLocaleDateString()}</div>}
+                  <div className="event-status active">Active</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
+    // CHECK-IN INTERFACE
+    // ============================================================
+    function CheckInView({ eventId, eventName, onBack }) {
+      const { data: guests, loading, refetch } = usePolling(
+        `${CONFIG.API_URL}/api/events/${eventId}/guests`,
+        2000
+      );
+      const { data: stats } = usePolling(
+        `${CONFIG.API_URL}/api/events/${eventId}/stats`,
+        2000
+      );
+      const [search, setSearch] = useState("");
+      const [filter, setFilter] = useState("all");
+      const searchRef = useRef(null);
+
+      const handleCheckin = async (guestId, currentlyCheckedIn) => {
+        const endpoint = currentlyCheckedIn ? "undo-checkin" : "checkin";
+        try {
+          await fetch(`${CONFIG.API_URL}/api/guests/${guestId}/${endpoint}`, {
+            method: "POST",
+          });
+          refetch();
+        } catch (err) {
+          console.error("Check-in error:", err);
+        }
+      };
+
+      const filtered = useMemo(() => {
+        if (!guests) return [];
+        let list = guests;
+
+        // Filter
+        if (filter === "checked-in") list = list.filter((g) => g.is_checked_in);
+        if (filter === "not-in") list = list.filter((g) => !g.is_checked_in);
+        if (filter === "vip") list = list.filter((g) => g.is_vip);
+        if (filter === "duplicates") list = list.filter((g) => g.is_duplicate_flag);
+
+        // Search
+        if (search.trim()) {
+          const q = search.toLowerCase();
+          list = list.filter((g) => g.name.toLowerCase().includes(q));
+        }
+
+        return list;
+      }, [guests, filter, search]);
+
+      if (loading) return <div className="loading">Loading guest list...</div>;
+
+      return (
+        <div>
+          {/* Stats */}
+          <div className="stats-bar">
+            <div className="stat-card">
+              <div className="stat-number">{stats?.total || 0}</div>
+              <div className="stat-label">Total</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-number accent">{stats?.checked_in || 0}</div>
+              <div className="stat-label">Checked In</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-number vip">{stats?.vips || 0}</div>
+              <div className="stat-label">VIPs</div>
+            </div>
+          </div>
+
+          {/* Search */}
+          <div className="search-container">
+            <span className="search-icon">🔍</span>
+            <input
+              ref={searchRef}
+              className="search-input"
+              type="text"
+              placeholder="Search guests..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoComplete="off"
+            />
+            <span className="search-count">{filtered.length}</span>
+          </div>
+
+          {/* Filters */}
+          <div className="filter-tabs">
+            {[
+              ["all", "All"],
+              ["not-in", "Not Arrived"],
+              ["checked-in", "Checked In"],
+              ["vip", "VIP"],
+              ["duplicates", "Duplicates"],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                className={`filter-tab ${filter === key ? "active" : ""}`}
+                onClick={() => setFilter(key)}
+              >
+                {label}
+                {key === "duplicates" && stats?.duplicates > 0
+                  ? ` (${stats.duplicates})`
+                  : ""}
+              </button>
+            ))}
+          </div>
+
+          {/* Guest List */}
+          <div className="guest-list">
+            {filtered.length === 0 ? (
+              <div className="empty-state">
+                <div className="icon">👀</div>
+                <p>
+                  {search
+                    ? "No guests match your search"
+                    : "No guests yet. Add guests via SMS!"}
+                </p>
+              </div>
+            ) : (
+              filtered.map((guest) => (
+                <div
+                  key={guest.id}
+                  className={`guest-row ${guest.is_checked_in ? "checked-in" : ""} ${
+                    guest.is_duplicate_flag ? "duplicate" : ""
+                  }`}
+                  onClick={() => handleCheckin(guest.id, guest.is_checked_in)}
+                >
+                  <div className="check-circle">
+                    {guest.is_checked_in ? "✓" : ""}
+                  </div>
+                  <div className="guest-info">
+                    <div className="guest-name">{guest.name}</div>
+                    <div className="guest-meta">
+                      {guest.is_vip && <span className="guest-tag tag-vip">VIP</span>}
+                      {!guest.is_primary && (
+                        <span className="guest-tag tag-plus">+1</span>
+                      )}
+                      {guest.is_duplicate_flag && (
+                        <span className="guest-tag tag-dup">POSSIBLE DUP</span>
+                      )}
+                      {guest.notes && (
+                        <span className="guest-note">{guest.notes}</span>
+                      )}
+                    </div>
+                  </div>
+                  {guest.checked_in_at && (
+                    <span className="guest-time">
+                      {new Date(guest.checked_in_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
+    // ADMIN VIEW
+    // ============================================================
+    function AdminView() {
+      const { data: events, refetch: refetchEvents } = usePolling(
+        `${CONFIG.API_URL}/api/events`,
+        5000
+      );
+      const { data: authUsers, refetch: refetchUsers } = usePolling(
+        `${CONFIG.API_URL}/api/authorized-users`,
+        5000
+      );
+
+      // Event form
+      const [eventName, setEventName] = useState("");
+      const [eventDate, setEventDate] = useState("");
+      const [eventPin, setEventPin] = useState("");
+
+      // Auth user form
+      const [userName, setUserName] = useState("");
+      const [userPhone, setUserPhone] = useState("");
+
+      const createEvent = async () => {
+        if (!eventName || !eventPin) return;
+        await fetch(`${CONFIG.API_URL}/api/events`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: eventName, date: eventDate || null, pin: eventPin }),
+        });
+        setEventName("");
+        setEventDate("");
+        setEventPin("");
+        refetchEvents();
+      };
+
+      const toggleEvent = async (id, isActive) => {
+        await fetch(`${CONFIG.API_URL}/api/events/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_active: !isActive }),
+        });
+        refetchEvents();
+      };
+
+      const addAuthUser = async () => {
+        if (!userPhone) return;
+        await fetch(`${CONFIG.API_URL}/api/authorized-users`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phone_number: userPhone,
+            name: userName || null,
+          }),
+        });
+        setUserName("");
+        setUserPhone("");
+        refetchUsers();
+      };
+
+      const removeAuthUser = async (id) => {
+        await fetch(`${CONFIG.API_URL}/api/authorized-users/${id}`, {
+          method: "DELETE",
+        });
+        refetchUsers();
+      };
+
+      return (
+        <div>
+          {/* Create Event */}
+          <div className="admin-section">
+            <h2>Create Event</h2>
+            <div className="admin-form" style={{ flexWrap: "wrap" }}>
+              <input
+                className="admin-input"
+                placeholder="Event name"
+                value={eventName}
+                onChange={(e) => setEventName(e.target.value)}
+              />
+              <input
+                className="admin-input"
+                type="date"
+                value={eventDate}
+                onChange={(e) => setEventDate(e.target.value)}
+                style={{ maxWidth: 160 }}
+              />
+            </div>
+            <div className="admin-form">
+              <input
+                className="admin-input"
+                placeholder="PIN (4-6 digits)"
+                value={eventPin}
+                onChange={(e) => setEventPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                style={{ maxWidth: 140 }}
+              />
+              <button className="btn" onClick={createEvent}>
+                Create Event
+              </button>
+            </div>
+          </div>
+
+          {/* Events List */}
+          <div className="admin-section">
+            <h2>Events</h2>
+            {(events || []).map((event) => (
+              <div className="admin-list-item" key={event.id}>
+                <div>
+                  <div className="name">{event.name}</div>
+                  <div className="detail">
+                    PIN: {event.pin} {event.date ? `· ${event.date}` : ""}
+                  </div>
+                </div>
+                <button
+                  className={`btn btn-sm ${event.is_active ? "btn-danger" : ""}`}
+                  onClick={() => toggleEvent(event.id, event.is_active)}
+                >
+                  {event.is_active ? "Deactivate" : "Activate"}
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Authorized Users */}
+          <div className="admin-section">
+            <h2>Authorized SMS Users</h2>
+            <div className="admin-form">
+              <input
+                className="admin-input"
+                placeholder="Name"
+                value={userName}
+                onChange={(e) => setUserName(e.target.value)}
+              />
+              <input
+                className="admin-input"
+                placeholder="+1234567890"
+                value={userPhone}
+                onChange={(e) => setUserPhone(e.target.value)}
+              />
+              <button className="btn" onClick={addAuthUser}>
+                Add
+              </button>
+            </div>
+            {(authUsers || []).map((user) => (
+              <div className="admin-list-item" key={user.id}>
+                <div>
+                  <div className="name">{user.name || "Unnamed"}</div>
+                  <div className="detail">{user.phone_number}</div>
+                </div>
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={() => removeAuthUser(user.id)}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
+    // MAIN APP
+    // ============================================================
+    function App() {
+      const [view, setView] = useState("events"); // events | pin | checkin | admin
+      const [selectedEventId, setSelectedEventId] = useState(null);
+      const [eventName, setEventName] = useState("");
+      const [activeTab, setActiveTab] = useState("checkin"); // checkin | admin
+
+      const handleSelectEvent = (eventId) => {
+        setSelectedEventId(eventId);
+        setView("pin");
+      };
+
+      const handlePinSuccess = (name) => {
+        setEventName(name);
+        setView("checkin");
+      };
+
+      const handleBack = () => {
+        setView("events");
+        setSelectedEventId(null);
+        setEventName("");
+      };
+
+      return (
+        <div className="app">
+          <div className="header">
+            <div className="logo" onClick={handleBack} style={{ cursor: "pointer" }}>
+              {view === "checkin" ? eventName : "GUESTLIST"}
+            </div>
+            <div className="nav-tabs">
+              <button
+                className={`nav-tab ${activeTab === "checkin" ? "active" : ""}`}
+                onClick={() => {
+                  setActiveTab("checkin");
+                  if (view === "admin") setView("events");
+                }}
+              >
+                Check-In
+              </button>
+              <button
+                className={`nav-tab ${activeTab === "admin" ? "active" : ""}`}
+                onClick={() => {
+                  setActiveTab("admin");
+                  setView("admin");
+                }}
+              >
+                Admin
+              </button>
+            </div>
+          </div>
+
+          {view === "admin" && <AdminView />}
+          {view === "events" && activeTab === "checkin" && (
+            <EventSelector onSelect={handleSelectEvent} />
+          )}
+          {view === "pin" && (
+            <PinScreen eventId={selectedEventId} onSuccess={handlePinSuccess} />
+          )}
+          {view === "checkin" && (
+            <CheckInView
+              eventId={selectedEventId}
+              eventName={eventName}
+              onBack={handleBack}
+            />
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
