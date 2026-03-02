@@ -452,17 +452,18 @@ app.get("/", (req, res) => {
 app.get("/api/events", async (req, res) => {
   const { data, error } = await supabase
     .from("events")
-    .select("*")
+    .select("id, name, date, is_active, created_at")
     .order("created_at", { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
 app.post("/api/events", async (req, res) => {
-  const { name, pin, date } = req.body;
+  const { name, pin, admin_pin, date } = req.body;
+  if (!admin_pin) return res.status(400).json({ error: "admin_pin is required" });
   const { data, error } = await supabase
     .from("events")
-    .insert({ name, pin, date, is_active: true })
+    .insert({ name, pin, admin_pin, date, is_active: true })
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
@@ -514,11 +515,86 @@ app.post("/api/events/:eventId/guests", async (req, res) => {
   res.json(data);
 });
 
+// --- Admin: Edit guest ---
+app.patch("/api/events/:eventId/guests/:id", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const allowed = ["name", "is_vip", "tags", "notes", "plus_count"];
+  const updates = {};
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) updates[key] = req.body[key];
+  }
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: "No valid fields to update" });
+  }
+  const { data, error } = await supabase
+    .from("guests")
+    .update(updates)
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// --- Admin: Delete guest ---
+app.delete("/api/events/:eventId/guests/:id", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { error } = await supabase.from("guests").delete().eq("id", id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// --- Legacy delete (no admin check, kept for backward compat) ---
 app.delete("/api/guests/:id", async (req, res) => {
   const { id } = req.params;
   const { error } = await supabase.from("guests").delete().eq("id", id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
+});
+
+// --- Admin: Export guests as CSV ---
+app.get("/api/events/:eventId/guests/export", requireAdmin, async (req, res) => {
+  const { eventId } = req.params;
+  const { data: event } = await supabase
+    .from("events")
+    .select("name")
+    .eq("id", eventId)
+    .single();
+  const { data: guests, error } = await supabase
+    .from("guests")
+    .select("*")
+    .eq("event_id", eventId)
+    .order("name", { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+
+  const escCSV = (val) => {
+    if (val == null) return "";
+    const s = String(val);
+    if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  };
+
+  const header = "Name,VIP,Tags,Notes,Checked In,Checked In At,Primary,Primary Guest";
+  const rows = (guests || []).map((g) =>
+    [
+      escCSV(g.name),
+      g.is_vip ? "Yes" : "No",
+      escCSV((g.tags || []).join("; ")),
+      escCSV(g.notes),
+      g.is_checked_in ? "Yes" : "No",
+      escCSV(g.checked_in_at || ""),
+      g.is_primary ? "Yes" : "No",
+      escCSV(g.primary_guest_name || ""),
+    ].join(",")
+  );
+
+  const csv = [header, ...rows].join("\n");
+  const filename = `${(event?.name || "guests").replace(/[^a-zA-Z0-9]/g, "_")}_guest_list.csv`;
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(csv);
 });
 
 // --- Check-in ---
@@ -579,20 +655,45 @@ app.post("/api/guests/:id/undo-checkin", async (req, res) => {
   res.json(data);
 });
 
-// --- PIN verification ---
+// --- PIN verification (returns role: "admin" or "user") ---
 app.post("/api/events/:eventId/verify-pin", async (req, res) => {
   const { eventId } = req.params;
   const { pin } = req.body;
   const { data: event } = await supabase
     .from("events")
-    .select("id, name, pin")
+    .select("id, name, pin, admin_pin")
     .eq("id", eventId)
     .single();
 
   if (!event) return res.status(404).json({ error: "Event not found" });
-  if (event.pin !== pin) return res.status(401).json({ error: "Invalid PIN" });
-  res.json({ success: true, event_name: event.name });
+
+  if (event.admin_pin && pin === event.admin_pin) {
+    return res.json({ success: true, event_name: event.name, role: "admin" });
+  }
+  if (pin === event.pin) {
+    return res.json({ success: true, event_name: event.name, role: "user" });
+  }
+  res.status(401).json({ error: "Invalid PIN" });
 });
+
+// --- Admin PIN verification middleware ---
+async function requireAdmin(req, res, next) {
+  const adminPin = req.headers["x-admin-pin"];
+  const eventId = req.params.eventId;
+  if (!adminPin || !eventId) {
+    return res.status(401).json({ error: "Admin PIN required" });
+  }
+  const { data: event } = await supabase
+    .from("events")
+    .select("admin_pin")
+    .eq("id", eventId)
+    .single();
+  if (!event) return res.status(404).json({ error: "Event not found" });
+  if (event.admin_pin !== adminPin) {
+    return res.status(403).json({ error: "Invalid admin PIN" });
+  }
+  next();
+}
 
 // --- Authorized Users ---
 app.get("/api/authorized-users", async (req, res) => {
