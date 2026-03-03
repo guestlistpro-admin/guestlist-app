@@ -482,6 +482,15 @@ app.patch("/api/events/:id", async (req, res) => {
   res.json(data);
 });
 
+app.delete("/api/events/:id", async (req, res) => {
+  const { id } = req.params;
+  // Delete all guests for this event first
+  await supabase.from("guests").delete().eq("event_id", id);
+  const { error } = await supabase.from("events").delete().eq("id", id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
 // --- Guests ---
 app.get("/api/events/:eventId/guests", async (req, res) => {
   const { eventId } = req.params;
