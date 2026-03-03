@@ -794,7 +794,7 @@
               </div>
             ) : (
               activeEvents.map((event) => (
-                <div key={event.id} className="event-card" onClick={() => onSelect(event.id)}>
+                <div key={event.id} className="event-card" onClick={() => onSelect(event.id, event.name)}>
                   <h3>{event.name}</h3>
                   {event.date && <div className="event-date">{new Date(event.date).toLocaleDateString()}</div>}
                   <div className="event-status active">Active</div>
@@ -809,7 +809,7 @@
     // ============================================================
     // CHECK-IN INTERFACE
     // ============================================================
-    function CheckInView({ eventId, eventName, onBack, role, adminPin }) {
+    function CheckInView({ eventId, eventName, onBack, role, adminPin, adminEmail }) {
       const isAdmin = role === "admin";
       const { data: guests, loading, refetch } = usePolling(
         `${CONFIG.API_URL}/api/events/${eventId}/guests`,
@@ -838,6 +838,7 @@
       const adminHeaders = {
         "Content-Type": "application/json",
         "x-admin-pin": adminPin || "",
+        ...(adminEmail ? { "x-admin-email": adminEmail } : {}),
       };
 
       const handleCheckin = async (guestId, currentlyCheckedIn) => {
@@ -998,7 +999,7 @@
         if (!confirm("Delete this guest?")) return;
         await fetch(`${CONFIG.API_URL}/api/events/${eventId}/guests/${guestId}`, {
           method: "DELETE",
-          headers: { "x-admin-pin": adminPin || "" },
+          headers: { "x-admin-pin": adminPin || "", ...(adminEmail ? { "x-admin-email": adminEmail } : {}) },
         });
         refetch();
       };
@@ -1073,7 +1074,7 @@
         try {
           const res = await fetch(
             `${CONFIG.API_URL}/api/events/${eventId}/guests/export`,
-            { headers: { "x-admin-pin": adminPin || "" } }
+            { headers: { "x-admin-pin": adminPin || "", ...(adminEmail ? { "x-admin-email": adminEmail } : {}) } }
           );
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
@@ -1366,19 +1367,11 @@
     // ============================================================
     // ADMIN VIEW (with Google OAuth)
     // ============================================================
-    function AdminView() {
-      const [adminAuth, setAdminAuth] = useState(() => {
-        try {
-          const saved = localStorage.getItem("guestlist_admin");
-          return saved ? JSON.parse(saved) : null;
-        } catch { return null; }
-      });
+    function AdminLoginScreen({ onAuth }) {
       const [authError, setAuthError] = useState("");
       const googleBtnRef = useRef(null);
 
-      // Initialize Google Sign-In
       useEffect(() => {
-        if (adminAuth) return;
         const initGoogle = () => {
           if (!window.google?.accounts?.id || !CONFIG.GOOGLE_CLIENT_ID) return;
           window.google.accounts.id.initialize({
@@ -1393,7 +1386,6 @@
             });
           }
         };
-        // Google script may not be loaded yet
         if (window.google?.accounts?.id) initGoogle();
         else {
           const timer = setInterval(() => {
@@ -1401,7 +1393,7 @@
           }, 200);
           return () => clearInterval(timer);
         }
-      }, [adminAuth]);
+      }, []);
 
       const handleGoogleResponse = async (response) => {
         try {
@@ -1414,7 +1406,7 @@
           const data = await res.json();
           if (data.authorized) {
             const auth = { email: data.email, name: data.name, picture: data.picture };
-            setAdminAuth(auth);
+            onAuth(auth);
             localStorage.setItem("guestlist_admin", JSON.stringify(auth));
           } else {
             setAuthError(`${data.email} is not an authorized admin. Ask an existing admin to add your email.`);
@@ -1424,31 +1416,18 @@
         }
       };
 
-      const handleLogout = () => {
-        setAdminAuth(null);
-        localStorage.removeItem("guestlist_admin");
-      };
-
-      // If no Google Client ID configured, skip auth
-      if (!CONFIG.GOOGLE_CLIENT_ID && !adminAuth) {
-        return <AdminPanel onLogout={null} adminEmail={null} />;
-      }
-
-      if (!adminAuth) {
-        return (
-          <div style={{ textAlign: "center", padding: "60px 20px" }}>
-            <h2 style={{ fontFamily: "var(--mono)", color: "var(--accent)", marginBottom: 8 }}>ADMIN LOGIN</h2>
-            <p style={{ color: "var(--text-dim)", marginBottom: 24, fontSize: 14 }}>Sign in with Google to access the admin panel</p>
+      return (
+        <div style={{ textAlign: "center", padding: "60px 20px" }}>
+          <h2 style={{ fontFamily: "var(--mono)", color: "var(--accent)", marginBottom: 8 }}>ADMIN LOGIN</h2>
+          <p style={{ color: "var(--text-dim)", marginBottom: 24, fontSize: 14 }}>Sign in with Google to access the admin panel</p>
+          {CONFIG.GOOGLE_CLIENT_ID ? (
             <div ref={googleBtnRef} style={{ display: "inline-block" }} />
-            {!CONFIG.GOOGLE_CLIENT_ID && (
-              <p style={{ color: "var(--text-faint)", marginTop: 16, fontSize: 12 }}>Google Client ID not configured</p>
-            )}
-            {authError && <p style={{ color: "var(--danger)", marginTop: 16, fontSize: 13 }}>{authError}</p>}
-          </div>
-        );
-      }
-
-      return <AdminPanel onLogout={handleLogout} adminEmail={adminAuth.email} adminName={adminAuth.name} />;
+          ) : (
+            <p style={{ color: "var(--danger)", fontSize: 13 }}>Google OAuth is not configured. Set GOOGLE_CLIENT_ID in the app config.</p>
+          )}
+          {authError && <p style={{ color: "var(--danger)", marginTop: 16, fontSize: 13 }}>{authError}</p>}
+        </div>
+      );
     }
 
     function AdminPanel({ onLogout, adminEmail, adminName }) {
@@ -1757,15 +1736,29 @@
     // MAIN APP
     // ============================================================
     function App() {
-      const [view, setView] = useState("events"); // events | pin | checkin | admin
+      const [view, setView] = useState("events"); // events | pin | checkin | admin | admin-login
       const [selectedEventId, setSelectedEventId] = useState(null);
       const [eventName, setEventName] = useState("");
       const [activeTab, setActiveTab] = useState("checkin"); // checkin | admin
       const [userRole, setUserRole] = useState("user");
       const [currentPin, setCurrentPin] = useState("");
+      const [adminAuth, setAdminAuth] = useState(() => {
+        try {
+          const saved = localStorage.getItem("guestlist_admin");
+          return saved ? JSON.parse(saved) : null;
+        } catch { return null; }
+      });
 
-      const handleSelectEvent = (eventId) => {
+      const handleSelectEvent = async (eventId, eventNameFromCard) => {
         setSelectedEventId(eventId);
+        // If logged in via Google OAuth, skip PIN and go straight to admin
+        if (adminAuth) {
+          setEventName(eventNameFromCard || "Event");
+          setUserRole("admin");
+          setCurrentPin("__oauth__");
+          setView("checkin");
+          return;
+        }
         setView("pin");
       };
 
@@ -1785,6 +1778,22 @@
         setCurrentPin("");
       };
 
+      const handleAdminLogout = () => {
+        setAdminAuth(null);
+        localStorage.removeItem("guestlist_admin");
+        setActiveTab("checkin");
+        setView("events");
+      };
+
+      const handleAdminTabClick = () => {
+        setActiveTab("admin");
+        if (adminAuth) {
+          setView("admin");
+        } else {
+          setView("admin-login");
+        }
+      };
+
       return (
         <div className="app">
           <div className="header">
@@ -1797,24 +1806,26 @@
                 className={`nav-tab ${activeTab === "checkin" ? "active" : ""}`}
                 onClick={() => {
                   setActiveTab("checkin");
-                  if (view === "admin") setView("events");
+                  if (view === "admin" || view === "admin-login") setView("events");
                 }}
               >
                 Check-In
               </button>
               <button
                 className={`nav-tab ${activeTab === "admin" ? "active" : ""}`}
-                onClick={() => {
-                  setActiveTab("admin");
-                  setView("admin");
-                }}
+                onClick={handleAdminTabClick}
               >
                 Admin
               </button>
             </div>
           </div>
 
-          {view === "admin" && <AdminView />}
+          {view === "admin-login" && (
+            <AdminLoginScreen onAuth={(auth) => { setAdminAuth(auth); setView("admin"); }} />
+          )}
+          {view === "admin" && adminAuth && (
+            <AdminPanel onLogout={handleAdminLogout} adminEmail={adminAuth.email} adminName={adminAuth.name} />
+          )}
           {view === "events" && activeTab === "checkin" && (
             <EventSelector onSelect={handleSelectEvent} />
           )}
@@ -1828,6 +1839,7 @@
               onBack={handleBack}
               role={userRole}
               adminPin={userRole === "admin" ? currentPin : null}
+              adminEmail={adminAuth ? adminAuth.email : null}
             />
           )}
         </div>
