@@ -614,7 +614,7 @@ app.get("/manifest.json", (req, res) => {
     name: "GuestList",
     short_name: "GuestList",
     start_url: "/",
-    display: "standalone",
+    display: "browser",
     background_color: "#0a0a0b",
     theme_color: "#0a0a0b",
     icons: [
