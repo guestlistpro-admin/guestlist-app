@@ -977,7 +977,21 @@ app.post("/api/events/:eventId/verify-pin", async (req, res) => {
 // --- Admin PIN verification middleware ---
 async function requireAdmin(req, res, next) {
   const adminPin = req.headers["x-admin-pin"];
+  const adminEmail = req.headers["x-admin-email"];
   const eventId = req.params.eventId;
+
+  // OAuth admin: verify email is in global_admins
+  if (adminEmail) {
+    const { data: admin } = await supabase
+      .from("global_admins")
+      .select("id")
+      .eq("email", adminEmail.toLowerCase())
+      .single();
+    if (admin) return next();
+    return res.status(403).json({ error: "Not an authorized admin" });
+  }
+
+  // PIN-based admin
   if (!adminPin || !eventId) {
     return res.status(401).json({ error: "Admin PIN required" });
   }
