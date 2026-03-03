@@ -429,6 +429,142 @@
     .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
     .empty-state p { font-size: 14px; line-height: 1.5; }
 
+    /* ---- ADMIN TOOLBAR (in check-in view) ---- */
+    .admin-toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .admin-toolbar .btn { font-size: 12px; padding: 8px 14px; }
+    .btn.btn-outline {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+    .btn.btn-outline:hover { background: rgba(200,255,62,0.08); }
+
+    .add-guest-form {
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 14px;
+      margin-bottom: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .add-guest-form .row { display: flex; gap: 8px; }
+    .add-guest-form input {
+      flex: 1;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      font-family: var(--font);
+      font-size: 13px;
+      color: var(--text);
+      outline: none;
+    }
+    .add-guest-form input:focus { border-color: var(--accent); }
+    .add-guest-form input::placeholder { color: var(--text-faint); }
+
+    .guest-actions {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .guest-actions button {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+    .guest-actions button:hover { border-color: var(--text-dim); color: var(--text); }
+    .guest-actions .delete-btn:hover { border-color: var(--danger); color: var(--danger); }
+
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 16px;
+    }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      width: 100%;
+      max-width: 400px;
+    }
+    .modal h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      color: var(--accent);
+    }
+    .modal .form-group { margin-bottom: 12px; }
+    .modal label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .modal input, .modal textarea {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-family: var(--font);
+      font-size: 14px;
+      color: var(--text);
+      outline: none;
+    }
+    .modal textarea { resize: vertical; min-height: 60px; }
+    .modal input:focus, .modal textarea:focus { border-color: var(--accent); }
+    .modal .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 0;
+    }
+    .modal .checkbox-row input[type="checkbox"] { width: auto; }
+    .modal .modal-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+      justify-content: flex-end;
+    }
+
+    .role-badge {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 4px;
+      letter-spacing: 1px;
+    }
+    .role-badge.admin { background: rgba(255,68,102,0.15); color: var(--danger); }
+    .role-badge.user { background: rgba(200,255,62,0.1); color: var(--accent-dim); }
+
     /* ---- ANIMATIONS ---- */
     @keyframes slideUp {
       from { opacity: 0; transform: translateY(8px); }
@@ -523,7 +659,7 @@
             });
             if (res.ok) {
               const data = await res.json();
-              onSuccess(data.event_name);
+              onSuccess(data.event_name, data.role || "user", newPin);
             } else {
               setError("Wrong PIN");
               setPin("");
@@ -600,7 +736,8 @@
     // ============================================================
     // CHECK-IN INTERFACE
     // ============================================================
-    function CheckInView({ eventId, eventName, onBack }) {
+    function CheckInView({ eventId, eventName, onBack, role, adminPin }) {
+      const isAdmin = role === "admin";
       const { data: guests, loading, refetch } = usePolling(
         `${CONFIG.API_URL}/api/events/${eventId}/guests`,
         2000
@@ -612,6 +749,19 @@
       const [search, setSearch] = useState("");
       const [filter, setFilter] = useState("all");
       const searchRef = useRef(null);
+      const [showAddForm, setShowAddForm] = useState(false);
+      const [addName, setAddName] = useState("");
+      const [addVip, setAddVip] = useState(false);
+      const [addNotes, setAddNotes] = useState("");
+      const [editGuest, setEditGuest] = useState(null);
+      const [editName, setEditName] = useState("");
+      const [editVip, setEditVip] = useState(false);
+      const [editNotes, setEditNotes] = useState("");
+
+      const adminHeaders = {
+        "Content-Type": "application/json",
+        "x-admin-pin": adminPin || "",
+      };
 
       const handleCheckin = async (guestId, currentlyCheckedIn) => {
         const endpoint = currentlyCheckedIn ? "undo-checkin" : "checkin";
@@ -625,17 +775,86 @@
         }
       };
 
+      const handleAddGuest = async () => {
+        if (!addName.trim()) return;
+        await fetch(`${CONFIG.API_URL}/api/events/${eventId}/guests`, {
+          method: "POST",
+          headers: adminHeaders,
+          body: JSON.stringify({
+            name: addName.trim(),
+            is_vip: addVip,
+            notes: addNotes || null,
+          }),
+        });
+        setAddName("");
+        setAddVip(false);
+        setAddNotes("");
+        setShowAddForm(false);
+        refetch();
+      };
+
+      const handleDeleteGuest = async (e, guestId) => {
+        e.stopPropagation();
+        if (!confirm("Delete this guest?")) return;
+        await fetch(`${CONFIG.API_URL}/api/events/${eventId}/guests/${guestId}`, {
+          method: "DELETE",
+          headers: { "x-admin-pin": adminPin || "" },
+        });
+        refetch();
+      };
+
+      const openEditModal = (e, guest) => {
+        e.stopPropagation();
+        setEditGuest(guest);
+        setEditName(guest.name);
+        setEditVip(guest.is_vip);
+        setEditNotes(guest.notes || "");
+      };
+
+      const handleSaveEdit = async () => {
+        if (!editGuest) return;
+        await fetch(`${CONFIG.API_URL}/api/events/${eventId}/guests/${editGuest.id}`, {
+          method: "PATCH",
+          headers: adminHeaders,
+          body: JSON.stringify({
+            name: editName.trim(),
+            is_vip: editVip,
+            notes: editNotes || null,
+          }),
+        });
+        setEditGuest(null);
+        refetch();
+      };
+
+      const handleExportCSV = async () => {
+        try {
+          const res = await fetch(
+            `${CONFIG.API_URL}/api/events/${eventId}/guests/export`,
+            { headers: { "x-admin-pin": adminPin || "" } }
+          );
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = res.headers.get("Content-Disposition")?.match(/filename="(.+)"/)?.[1] || "guests.csv";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        } catch (err) {
+          console.error("Export error:", err);
+        }
+      };
+
       const filtered = useMemo(() => {
         if (!guests) return [];
         let list = guests;
 
-        // Filter
         if (filter === "checked-in") list = list.filter((g) => g.is_checked_in);
         if (filter === "not-in") list = list.filter((g) => !g.is_checked_in);
         if (filter === "vip") list = list.filter((g) => g.is_vip);
         if (filter === "duplicates") list = list.filter((g) => g.is_duplicate_flag);
 
-        // Search
         if (search.trim()) {
           const q = search.toLowerCase();
           list = list.filter((g) => g.name.toLowerCase().includes(q));
@@ -663,6 +882,45 @@
               <div className="stat-label">VIPs</div>
             </div>
           </div>
+
+          {/* Admin Toolbar */}
+          {isAdmin && (
+            <div className="admin-toolbar">
+              <span className="role-badge admin">ADMIN</span>
+              <button className="btn btn-outline btn-sm" onClick={() => setShowAddForm(!showAddForm)}>
+                {showAddForm ? "Cancel" : "+ Add Guest"}
+              </button>
+              <button className="btn btn-outline btn-sm" onClick={handleExportCSV}>
+                Export CSV
+              </button>
+            </div>
+          )}
+
+          {/* Add Guest Form */}
+          {isAdmin && showAddForm && (
+            <div className="add-guest-form">
+              <div className="row">
+                <input
+                  placeholder="Guest name"
+                  value={addName}
+                  onChange={(e) => setAddName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddGuest()}
+                  autoFocus
+                />
+              </div>
+              <div className="row">
+                <input
+                  placeholder="Notes (optional)"
+                  value={addNotes}
+                  onChange={(e) => setAddNotes(e.target.value)}
+                />
+                <label style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--vip)", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  <input type="checkbox" checked={addVip} onChange={(e) => setAddVip(e.target.checked)} /> VIP
+                </label>
+              </div>
+              <button className="btn" onClick={handleAddGuest}>Add Guest</button>
+            </div>
+          )}
 
           {/* Search */}
           <div className="search-container">
@@ -709,7 +967,7 @@
                 <p>
                   {search
                     ? "No guests match your search"
-                    : "No guests yet. Add guests via SMS!"}
+                    : isAdmin ? "No guests yet. Add one above!" : "No guests yet. Add guests via SMS!"}
                 </p>
               </div>
             ) : (
@@ -747,10 +1005,41 @@
                       })}
                     </span>
                   )}
+                  {isAdmin && (
+                    <div className="guest-actions">
+                      <button onClick={(e) => openEditModal(e, guest)} title="Edit">✎</button>
+                      <button className="delete-btn" onClick={(e) => handleDeleteGuest(e, guest.id)} title="Delete">✕</button>
+                    </div>
+                  )}
                 </div>
               ))
             )}
           </div>
+
+          {/* Edit Modal */}
+          {editGuest && (
+            <div className="modal-overlay" onClick={() => setEditGuest(null)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Edit Guest</h3>
+                <div className="form-group">
+                  <label>Name</label>
+                  <input value={editName} onChange={(e) => setEditName(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label>Notes</label>
+                  <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
+                </div>
+                <div className="checkbox-row">
+                  <input type="checkbox" checked={editVip} onChange={(e) => setEditVip(e.target.checked)} id="edit-vip" />
+                  <label htmlFor="edit-vip" style={{ marginBottom: 0 }}>VIP</label>
+                </div>
+                <div className="modal-actions">
+                  <button className="btn btn-ghost" onClick={() => setEditGuest(null)}>Cancel</button>
+                  <button className="btn" onClick={handleSaveEdit}>Save</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -772,21 +1061,23 @@
       const [eventName, setEventName] = useState("");
       const [eventDate, setEventDate] = useState("");
       const [eventPin, setEventPin] = useState("");
+      const [eventAdminPin, setEventAdminPin] = useState("");
 
       // Auth user form
       const [userName, setUserName] = useState("");
       const [userPhone, setUserPhone] = useState("");
 
       const createEvent = async () => {
-        if (!eventName || !eventPin) return;
+        if (!eventName || !eventPin || !eventAdminPin) return;
         await fetch(`${CONFIG.API_URL}/api/events`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: eventName, date: eventDate || null, pin: eventPin }),
+          body: JSON.stringify({ name: eventName, date: eventDate || null, pin: eventPin, admin_pin: eventAdminPin }),
         });
         setEventName("");
         setEventDate("");
         setEventPin("");
+        setEventAdminPin("");
         refetchEvents();
       };
 
@@ -844,13 +1135,20 @@
             <div className="admin-form">
               <input
                 className="admin-input"
-                placeholder="PIN (4-6 digits)"
+                placeholder="User PIN (4-6 digits)"
                 value={eventPin}
                 onChange={(e) => setEventPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 style={{ maxWidth: 140 }}
               />
+              <input
+                className="admin-input"
+                placeholder="Admin PIN (4-6 digits)"
+                value={eventAdminPin}
+                onChange={(e) => setEventAdminPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                style={{ maxWidth: 140 }}
+              />
               <button className="btn" onClick={createEvent}>
-                Create Event
+                Create
               </button>
             </div>
           </div>
@@ -863,7 +1161,7 @@
                 <div>
                   <div className="name">{event.name}</div>
                   <div className="detail">
-                    PIN: {event.pin} {event.date ? `· ${event.date}` : ""}
+                    {event.date ? new Date(event.date).toLocaleDateString() : "No date set"}
                   </div>
                 </div>
                 <button
@@ -923,14 +1221,18 @@
       const [selectedEventId, setSelectedEventId] = useState(null);
       const [eventName, setEventName] = useState("");
       const [activeTab, setActiveTab] = useState("checkin"); // checkin | admin
+      const [userRole, setUserRole] = useState("user");
+      const [currentPin, setCurrentPin] = useState("");
 
       const handleSelectEvent = (eventId) => {
         setSelectedEventId(eventId);
         setView("pin");
       };
 
-      const handlePinSuccess = (name) => {
+      const handlePinSuccess = (name, role, pin) => {
         setEventName(name);
+        setUserRole(role);
+        setCurrentPin(pin);
         setView("checkin");
       };
 
@@ -938,6 +1240,8 @@
         setView("events");
         setSelectedEventId(null);
         setEventName("");
+        setUserRole("user");
+        setCurrentPin("");
       };
 
       return (
@@ -945,6 +1249,7 @@
           <div className="header">
             <div className="logo" onClick={handleBack} style={{ cursor: "pointer" }}>
               {view === "checkin" ? eventName : "GUESTLIST"}
+              {view === "checkin" && <span className={`role-badge ${userRole}`} style={{ marginLeft: 8 }}>{userRole}</span>}
             </div>
             <div className="nav-tabs">
               <button
@@ -980,6 +1285,8 @@
               eventId={selectedEventId}
               eventName={eventName}
               onBack={handleBack}
+              role={userRole}
+              adminPin={userRole === "admin" ? currentPin : null}
             />
           )}
         </div>
