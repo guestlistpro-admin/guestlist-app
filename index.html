@@ -578,6 +578,71 @@
     }
     .loading { animation: pulse 1.5s infinite; color: var(--text-dim); text-align: center; padding: 40px; }
 
+    /* ---- BULK ADD PREVIEW ---- */
+    .add-guest-form textarea {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      font-family: var(--font);
+      font-size: 13px;
+      color: var(--text);
+      outline: none;
+      resize: vertical;
+      min-height: 40px;
+    }
+    .add-guest-form textarea:focus { border-color: var(--accent); }
+    .add-guest-form textarea::placeholder { color: var(--text-faint); }
+
+    .bulk-preview-list {
+      max-height: 300px;
+      overflow-y: auto;
+      margin: 12px 0;
+    }
+    .bulk-preview-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 14px;
+    }
+    .bulk-preview-item.is-dup { color: var(--danger); }
+    .bulk-preview-item .dup-note {
+      font-size: 11px;
+      color: var(--danger);
+      opacity: 0.8;
+    }
+    .bulk-preview-item input[type="checkbox"] { width: auto; flex-shrink: 0; }
+
+    /* ---- PLUS-ONE STEPPER ---- */
+    .plus-one-stepper {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .plus-one-stepper button {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 18px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .plus-one-stepper button:hover { border-color: var(--accent); color: var(--accent); }
+    .plus-one-stepper .count {
+      font-family: var(--mono);
+      font-size: 18px;
+      min-width: 24px;
+      text-align: center;
+    }
+
     /* ---- RESPONSIVE ---- */
     @media (max-width: 380px) {
       .stat-number { font-size: 22px; }
@@ -750,13 +815,15 @@
       const [filter, setFilter] = useState("all");
       const searchRef = useRef(null);
       const [showAddForm, setShowAddForm] = useState(false);
-      const [addName, setAddName] = useState("");
+      const [addNames, setAddNames] = useState("");
       const [addVip, setAddVip] = useState(false);
       const [addNotes, setAddNotes] = useState("");
+      const [bulkPreview, setBulkPreview] = useState(null);
       const [editGuest, setEditGuest] = useState(null);
       const [editName, setEditName] = useState("");
       const [editVip, setEditVip] = useState(false);
       const [editNotes, setEditNotes] = useState("");
+      const [editPlusCount, setEditPlusCount] = useState(0);
 
       const adminHeaders = {
         "Content-Type": "application/json",
@@ -775,22 +842,93 @@
         }
       };
 
-      const handleAddGuest = async () => {
-        if (!addName.trim()) return;
-        await fetch(`${CONFIG.API_URL}/api/events/${eventId}/guests`, {
-          method: "POST",
-          headers: adminHeaders,
-          body: JSON.stringify({
-            name: addName.trim(),
-            is_vip: addVip,
-            notes: addNotes || null,
-          }),
+      const clientLevenshtein = (a, b) => {
+        const m = a.length, n = b.length;
+        const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+        for (let i = 0; i <= m; i++) dp[i][0] = i;
+        for (let j = 0; j <= n; j++) dp[0][j] = j;
+        for (let i = 1; i <= m; i++)
+          for (let j = 1; j <= n; j++)
+            dp[i][j] = Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+(a[i-1]!==b[j-1]?1:0));
+        return dp[m][n];
+      };
+
+      const findDuplicate = (name, guestList) => {
+        const normalize = s => s.toLowerCase().replace(/[^a-z]/g, "");
+        const n = normalize(name);
+        if (!n) return null;
+        for (const g of guestList) {
+          if (!g.is_primary) continue;
+          const existing = normalize(g.name);
+          if (existing === n) return g.name;
+          if (existing.includes(n) || n.includes(existing)) return g.name;
+          if (n.length > 2 && existing.length > 2 && clientLevenshtein(existing, n) <= 2) return g.name;
+        }
+        return null;
+      };
+
+      const handleAddGuests = () => {
+        const lines = addNames.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+        if (lines.length === 0) return;
+
+        const preview = lines.map(name => {
+          const matchedName = findDuplicate(name, guests || []);
+          return { name, isDuplicate: !!matchedName, matchedName, selected: !matchedName };
         });
-        setAddName("");
+
+        // Check for duplicates within the batch itself
+        for (let i = 0; i < preview.length; i++) {
+          if (preview[i].isDuplicate) continue;
+          const normalize = s => s.toLowerCase().replace(/[^a-z]/g, "");
+          for (let j = 0; j < i; j++) {
+            if (normalize(preview[i].name) === normalize(preview[j].name)) {
+              preview[i].isDuplicate = true;
+              preview[i].matchedName = preview[j].name + " (in this batch)";
+              preview[i].selected = false;
+              break;
+            }
+          }
+        }
+
+        const hasDuplicates = preview.some(p => p.isDuplicate);
+
+        if (lines.length === 1 && !hasDuplicates) {
+          submitGuests([{ name: lines[0], is_vip: addVip, notes: addNotes || null }]);
+        } else {
+          setBulkPreview(preview);
+        }
+      };
+
+      const submitGuests = async (guestList) => {
+        if (guestList.length === 1) {
+          await fetch(`${CONFIG.API_URL}/api/events/${eventId}/guests`, {
+            method: "POST",
+            headers: adminHeaders,
+            body: JSON.stringify({
+              name: guestList[0].name,
+              is_vip: guestList[0].is_vip || false,
+              notes: guestList[0].notes || null,
+            }),
+          });
+        } else {
+          await fetch(`${CONFIG.API_URL}/api/events/${eventId}/guests/bulk`, {
+            method: "POST",
+            headers: adminHeaders,
+            body: JSON.stringify({ guests: guestList }),
+          });
+        }
+        setAddNames("");
         setAddVip(false);
         setAddNotes("");
         setShowAddForm(false);
+        setBulkPreview(null);
         refetch();
+      };
+
+      const confirmBulkAdd = () => {
+        const selected = bulkPreview.filter(p => p.selected);
+        if (selected.length === 0) { setBulkPreview(null); return; }
+        submitGuests(selected.map(p => ({ name: p.name, is_vip: addVip, notes: addNotes || null })));
       };
 
       const handleDeleteGuest = async (e, guestId) => {
@@ -809,6 +947,8 @@
         setEditName(guest.name);
         setEditVip(guest.is_vip);
         setEditNotes(guest.notes || "");
+        const plusOnes = (guests || []).filter(g => !g.is_primary && g.primary_guest_name === guest.name);
+        setEditPlusCount(plusOnes.length);
       };
 
       const handleSaveEdit = async () => {
@@ -822,6 +962,17 @@
             notes: editNotes || null,
           }),
         });
+        // Update plus-ones if this is a primary guest
+        if (editGuest.is_primary) {
+          const currentPlusOnes = (guests || []).filter(g => !g.is_primary && g.primary_guest_name === editGuest.name);
+          if (editPlusCount !== currentPlusOnes.length) {
+            await fetch(`${CONFIG.API_URL}/api/events/${eventId}/guests/${editGuest.id}/plus-ones`, {
+              method: "PUT",
+              headers: adminHeaders,
+              body: JSON.stringify({ count: editPlusCount }),
+            });
+          }
+        }
         setEditGuest(null);
         refetch();
       };
@@ -899,18 +1050,16 @@
           {/* Add Guest Form */}
           {isAdmin && showAddForm && (
             <div className="add-guest-form">
+              <textarea
+                placeholder={"One name per line\nJohn Smith\nJane Doe\nBob Wilson"}
+                value={addNames}
+                onChange={(e) => setAddNames(e.target.value)}
+                rows={Math.max(2, Math.min(6, addNames.split("\n").length + 1))}
+                autoFocus
+              />
               <div className="row">
                 <input
-                  placeholder="Guest name"
-                  value={addName}
-                  onChange={(e) => setAddName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleAddGuest()}
-                  autoFocus
-                />
-              </div>
-              <div className="row">
-                <input
-                  placeholder="Notes (optional)"
+                  placeholder="Notes (optional, applies to all)"
                   value={addNotes}
                   onChange={(e) => setAddNotes(e.target.value)}
                 />
@@ -918,7 +1067,9 @@
                   <input type="checkbox" checked={addVip} onChange={(e) => setAddVip(e.target.checked)} /> VIP
                 </label>
               </div>
-              <button className="btn" onClick={handleAddGuest}>Add Guest</button>
+              <button className="btn" onClick={handleAddGuests}>
+                {addNames.split("\n").filter(l => l.trim()).length > 1 ? "Review & Add" : "Add Guest"}
+              </button>
             </div>
           )}
 
@@ -1033,9 +1184,55 @@
                   <input type="checkbox" checked={editVip} onChange={(e) => setEditVip(e.target.checked)} id="edit-vip" />
                   <label htmlFor="edit-vip" style={{ marginBottom: 0 }}>VIP</label>
                 </div>
+                {editGuest.is_primary && (
+                  <div className="form-group">
+                    <label>Plus Ones</label>
+                    <div className="plus-one-stepper">
+                      <button type="button" onClick={() => setEditPlusCount(Math.max(0, editPlusCount - 1))}>−</button>
+                      <span className="count">{editPlusCount}</span>
+                      <button type="button" onClick={() => setEditPlusCount(editPlusCount + 1)}>+</button>
+                    </div>
+                  </div>
+                )}
                 <div className="modal-actions">
                   <button className="btn btn-ghost" onClick={() => setEditGuest(null)}>Cancel</button>
                   <button className="btn" onClick={handleSaveEdit}>Save</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Bulk Add Preview Modal */}
+          {bulkPreview && (
+            <div className="modal-overlay" onClick={() => setBulkPreview(null)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Review Guests ({bulkPreview.filter(p => p.selected).length}/{bulkPreview.length})</h3>
+                <div className="bulk-preview-list">
+                  {bulkPreview.map((item, i) => (
+                    <div key={i} className={`bulk-preview-item ${item.isDuplicate ? "is-dup" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={item.selected}
+                        onChange={(e) => {
+                          const updated = [...bulkPreview];
+                          updated[i] = { ...updated[i], selected: e.target.checked };
+                          setBulkPreview(updated);
+                        }}
+                      />
+                      <div>
+                        <div>{item.name}</div>
+                        {item.isDuplicate && (
+                          <div className="dup-note">Possible duplicate of "{item.matchedName}"</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="modal-actions">
+                  <button className="btn btn-ghost" onClick={() => setBulkPreview(null)}>Cancel</button>
+                  <button className="btn" onClick={confirmBulkAdd}>
+                    Add {bulkPreview.filter(p => p.selected).length} Guests
+                  </button>
                 </div>
               </div>
             </div>
