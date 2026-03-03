@@ -70,27 +70,41 @@ app.post("/api/sms/incoming", async (req, res) => {
       .limit(1)
       .single();
 
-    // Handle YES to confirm guest list
+    // Handle YES to confirm guest list (add or remove)
     if (pending && pending.status === "pending" && body.toUpperCase() === "YES") {
-      twiml.message("⏳ Adding guests now...");
+      twiml.message("⏳ Processing...");
       res.type("text/xml").send(twiml.toString());
 
       try {
         const parsed = JSON.parse(pending.parsed_data);
-        await addGuestsToEvent(parsed.event_id, parsed.guests);
-        await supabase
-          .from("pending_submissions")
-          .update({ status: "confirmed" })
-          .eq("id", pending.id);
 
-        const count = parsed.guests.reduce(
-          (sum, g) => sum + 1 + (g.plus_count || 0),
-          0
-        );
-        await sendReply(fromNumber, `✅ Done! Added ${count} guests to ${parsed.event_name}.`);
+        if (parsed.action === "remove") {
+          for (const guestId of parsed.guest_ids) {
+            await supabase.from("guests").delete().eq("id", guestId);
+          }
+          await supabase
+            .from("pending_submissions")
+            .update({ status: "confirmed" })
+            .eq("id", pending.id);
+          await sendReply(
+            fromNumber,
+            `✅ Done! Removed ${parsed.guest_ids.length} guests from ${parsed.event_name}.`
+          );
+        } else {
+          await addGuestsToEvent(parsed.event_id, parsed.guests);
+          await supabase
+            .from("pending_submissions")
+            .update({ status: "confirmed" })
+            .eq("id", pending.id);
+          const count = parsed.guests.reduce(
+            (sum, g) => sum + 1 + (g.plus_count || 0),
+            0
+          );
+          await sendReply(fromNumber, `✅ Done! Added ${count} guests to ${parsed.event_name}.`);
+        }
       } catch (bgErr) {
         console.error("Background YES processing error:", bgErr);
-        await sendReply(fromNumber, "❌ Something went wrong adding guests. Please try sending your list again.");
+        await sendReply(fromNumber, "❌ Something went wrong. Please try sending your list again.");
       }
       return;
     }
@@ -108,7 +122,7 @@ app.post("/api/sms/incoming", async (req, res) => {
 
     // Handle event clarification reply (user sent back an event name)
     if (pending && pending.status === "awaiting_event") {
-      twiml.message("⏳ Processing your guest list... I'll send a confirmation shortly.");
+      twiml.message("⏳ Processing your request... I'll send a confirmation shortly.");
       res.type("text/xml").send(twiml.toString());
 
       // Update status so it doesn't get picked up again
@@ -117,17 +131,40 @@ app.post("/api/sms/incoming", async (req, res) => {
         .update({ status: "processing" })
         .eq("id", pending.id);
 
-      // Re-process with the event name prepended to the original text
-      const originalText = pending.raw_text;
-      const combinedText = body + "\n" + originalText;
-      processGuestListInBackground(fromNumber, combinedText, pending.id).catch((err) => {
-        console.error("Background processing error:", err);
-        sendReply(fromNumber, "❌ Something went wrong processing your list. Please try again.").catch(console.error);
+      const pendingData = JSON.parse(pending.parsed_data);
+
+      if (pendingData.action === "remove") {
+        // Re-process as removal with event name prepended
+        const namesOnly = pending.raw_text.replace(/^remove\s*/i, "").trim();
+        const combinedText = "remove " + body + "\n" + namesOnly;
+        processRemovalInBackground(fromNumber, combinedText).catch((err) => {
+          console.error("Removal processing error:", err);
+          sendReply(fromNumber, "❌ Something went wrong. Please try again.").catch(console.error);
+        });
+      } else {
+        // Re-process with the event name prepended to the original text
+        const originalText = pending.raw_text;
+        const combinedText = body + "\n" + originalText;
+        processGuestListInBackground(fromNumber, combinedText, pending.id).catch((err) => {
+          console.error("Background processing error:", err);
+          sendReply(fromNumber, "❌ Something went wrong processing your list. Please try again.").catch(console.error);
+        });
+      }
+      return;
+    }
+
+    // 3. Check for remove command
+    if (body.toLowerCase().startsWith("remove")) {
+      twiml.message("⏳ Processing removal request...");
+      res.type("text/xml").send(twiml.toString());
+      processRemovalInBackground(fromNumber, body).catch((err) => {
+        console.error("Removal processing error:", err);
+        sendReply(fromNumber, "❌ Something went wrong. Please try again.").catch(console.error);
       });
       return;
     }
 
-    // 3. For new guest lists: respond immediately, parse in background
+    // 4. For new guest lists: respond immediately, parse in background
     twiml.message("⏳ Processing your guest list... I'll send a confirmation shortly.");
     res.type("text/xml").send(twiml.toString());
 
@@ -438,6 +475,138 @@ function levenshtein(a, b) {
 }
 
 // ============================================================
+// FUZZY BEST MATCH (for removal matching)
+// ============================================================
+function findBestMatch(name, existingGuests) {
+  const normalize = (s) => s.toLowerCase().replace(/[^a-z]/g, "");
+  const normalized = normalize(name);
+
+  // Exact normalized match
+  for (const g of existingGuests) {
+    if (normalize(g.name) === normalized) return g;
+  }
+
+  // Substring or close Levenshtein match
+  let bestMatch = null;
+  let bestScore = Infinity;
+  for (const g of existingGuests) {
+    const n = normalize(g.name);
+    if (n.includes(normalized) || normalized.includes(n)) return g;
+    const dist = levenshtein(n, normalized);
+    if (dist <= 2 && dist < bestScore) {
+      bestScore = dist;
+      bestMatch = g;
+    }
+  }
+  return bestMatch;
+}
+
+// ============================================================
+// BACKGROUND REMOVAL PROCESSING (Twilio "remove" command)
+// ============================================================
+async function processRemovalInBackground(fromNumber, body) {
+  const { data: events } = await supabase
+    .from("events")
+    .select("*")
+    .eq("is_active", true)
+    .order("created_at", { ascending: false });
+
+  if (!events || events.length === 0) {
+    await sendReply(fromNumber, "No active events found.");
+    return;
+  }
+
+  const namesText = body.replace(/^remove\s*/i, "").trim();
+  if (!namesText) {
+    await sendReply(
+      fromNumber,
+      "Please specify names to remove. Example:\nremove\nJohn Smith\nJane Doe"
+    );
+    return;
+  }
+
+  const parseResult = await parseNamesWithClaude(namesText, events);
+
+  if (parseResult.needs_clarification) {
+    await supabase.from("pending_submissions").insert({
+      phone_number: fromNumber,
+      raw_text: body,
+      parsed_data: JSON.stringify({ awaiting_event: true, action: "remove" }),
+      status: "awaiting_event",
+    });
+    await sendReply(fromNumber, parseResult.clarification_message);
+    return;
+  }
+
+  // Find matching guests
+  const { data: existingGuests } = await supabase
+    .from("guests")
+    .select("*")
+    .eq("event_id", parseResult.event_id)
+    .eq("is_primary", true);
+
+  const matches = [];
+  const noMatch = [];
+
+  for (const parsedGuest of parseResult.guests) {
+    const match = findBestMatch(parsedGuest.name, existingGuests || []);
+    if (match) {
+      matches.push(match);
+      // Also find their plus-ones
+      const { data: plusOnes } = await supabase
+        .from("guests")
+        .select("*")
+        .eq("event_id", parseResult.event_id)
+        .eq("primary_guest_name", match.name)
+        .eq("is_primary", false);
+      if (plusOnes?.length > 0) {
+        matches.push(...plusOnes);
+      }
+    } else {
+      noMatch.push(parsedGuest.name);
+    }
+  }
+
+  if (matches.length === 0) {
+    await sendReply(
+      fromNumber,
+      `No matching guests found in "${parseResult.event_name}". No one was removed.`
+    );
+    return;
+  }
+
+  const primaryMatches = matches.filter((m) => m.is_primary);
+  let msg = `Removing from "${parseResult.event_name}":\n`;
+  primaryMatches.forEach((m, i) => {
+    const plusOnes = matches.filter(
+      (p) => !p.is_primary && p.primary_guest_name === m.name
+    );
+    let line = `${i + 1}. ${m.name}`;
+    if (plusOnes.length > 0) line += ` (+${plusOnes.length})`;
+    msg += line + "\n";
+  });
+  if (noMatch.length > 0) {
+    msg += `\nNo match found for: ${noMatch.join(", ")}`;
+  }
+  msg += `\nTotal: ${matches.length} guests will be removed`;
+  msg += "\n\nReply YES to confirm or NO to cancel.";
+
+  await supabase.from("pending_submissions").insert({
+    phone_number: fromNumber,
+    raw_text: body,
+    parsed_data: JSON.stringify({
+      action: "remove",
+      event_id: parseResult.event_id,
+      event_name: parseResult.event_name,
+      guest_ids: matches.map((m) => m.id),
+    }),
+    status: "pending",
+  });
+
+  await sendReply(fromNumber, msg);
+}
+
+// ============================================================
 // ROOT ROUTE
 // ============================================================
 app.get("/", (req, res) => {
@@ -524,6 +693,32 @@ app.post("/api/events/:eventId/guests", async (req, res) => {
   res.json(data);
 });
 
+// --- Bulk add guests ---
+app.post("/api/events/:eventId/guests/bulk", async (req, res) => {
+  const { eventId } = req.params;
+  const { guests } = req.body;
+  if (!Array.isArray(guests) || guests.length === 0) {
+    return res.status(400).json({ error: "guests array is required" });
+  }
+  const rows = [];
+  for (const g of guests) {
+    const isDuplicate = await checkDuplicate(eventId, g.name);
+    rows.push({
+      event_id: eventId,
+      name: g.name,
+      is_primary: true,
+      is_vip: g.is_vip || false,
+      tags: g.tags || [],
+      notes: g.notes || null,
+      is_checked_in: false,
+      is_duplicate_flag: isDuplicate,
+    });
+  }
+  const { data, error } = await supabase.from("guests").insert(rows).select();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 // --- Admin: Edit guest ---
 app.patch("/api/events/:eventId/guests/:id", requireAdmin, async (req, res) => {
   const { id } = req.params;
@@ -543,6 +738,54 @@ app.patch("/api/events/:eventId/guests/:id", requireAdmin, async (req, res) => {
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// --- Admin: Manage plus-ones ---
+app.put("/api/events/:eventId/guests/:id/plus-ones", requireAdmin, async (req, res) => {
+  const { eventId, id } = req.params;
+  const { count } = req.body;
+  const targetCount = Math.max(0, parseInt(count) || 0);
+
+  const { data: primary } = await supabase
+    .from("guests")
+    .select("name")
+    .eq("id", id)
+    .single();
+  if (!primary) return res.status(404).json({ error: "Guest not found" });
+
+  const { data: existing } = await supabase
+    .from("guests")
+    .select("*")
+    .eq("event_id", eventId)
+    .eq("primary_guest_name", primary.name)
+    .eq("is_primary", false)
+    .order("name");
+
+  const currentCount = existing?.length || 0;
+
+  if (targetCount > currentCount) {
+    const newRows = [];
+    for (let j = currentCount + 1; j <= targetCount; j++) {
+      newRows.push({
+        event_id: eventId,
+        name: `${primary.name} - Guest ${j}`,
+        is_primary: false,
+        primary_guest_name: primary.name,
+        tags: [],
+        notes: null,
+        is_vip: false,
+        is_checked_in: false,
+        is_duplicate_flag: false,
+      });
+    }
+    await supabase.from("guests").insert(newRows);
+  } else if (targetCount < currentCount) {
+    const toDelete = existing.slice(targetCount);
+    const ids = toDelete.map((g) => g.id);
+    await supabase.from("guests").delete().in("id", ids);
+  }
+
+  res.json({ success: true, count: targetCount });
 });
 
 // --- Admin: Delete guest ---
