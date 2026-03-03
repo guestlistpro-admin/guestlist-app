@@ -607,6 +607,27 @@ async function processRemovalInBackground(fromNumber, body) {
 }
 
 // ============================================================
+// PWA MANIFEST
+// ============================================================
+app.get("/manifest.json", (req, res) => {
+  res.json({
+    name: "GuestList",
+    short_name: "GuestList",
+    start_url: "/",
+    display: "standalone",
+    background_color: "#0a0a0b",
+    theme_color: "#0a0a0b",
+    icons: [
+      {
+        src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%230a0a0b' width='100' height='100' rx='20'/><text y='70' x='50' text-anchor='middle' font-size='60'>🎫</text></svg>",
+        sizes: "any",
+        type: "image/svg+xml",
+      },
+    ],
+  });
+});
+
+// ============================================================
 // ROOT ROUTE
 // ============================================================
 app.get("/", (req, res) => {
@@ -674,10 +695,9 @@ app.get("/api/events/:eventId/guests", async (req, res) => {
 
 app.post("/api/events/:eventId/guests", async (req, res) => {
   const { eventId } = req.params;
-  const { name, is_vip, tags, notes } = req.body;
-  const { data, error } = await supabase
-    .from("guests")
-    .insert({
+  const { name, is_vip, tags, notes, plus_count } = req.body;
+  const rows = [
+    {
       event_id: eventId,
       name,
       is_primary: true,
@@ -686,9 +706,22 @@ app.post("/api/events/:eventId/guests", async (req, res) => {
       notes: notes || null,
       is_checked_in: false,
       is_duplicate_flag: false,
-    })
-    .select()
-    .single();
+    },
+  ];
+  for (let j = 1; j <= (plus_count || 0); j++) {
+    rows.push({
+      event_id: eventId,
+      name: `${name} - Guest ${j}`,
+      is_primary: false,
+      primary_guest_name: name,
+      tags: [],
+      notes: null,
+      is_vip: false,
+      is_checked_in: false,
+      is_duplicate_flag: false,
+    });
+  }
+  const { data, error } = await supabase.from("guests").insert(rows).select();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -713,6 +746,19 @@ app.post("/api/events/:eventId/guests/bulk", async (req, res) => {
       is_checked_in: false,
       is_duplicate_flag: isDuplicate,
     });
+    for (let j = 1; j <= (g.plus_count || 0); j++) {
+      rows.push({
+        event_id: eventId,
+        name: `${g.name} - Guest ${j}`,
+        is_primary: false,
+        primary_guest_name: g.name,
+        tags: [],
+        notes: null,
+        is_vip: false,
+        is_checked_in: false,
+        is_duplicate_flag: false,
+      });
+    }
   }
   const { data, error } = await supabase.from("guests").insert(rows).select();
   if (error) return res.status(500).json({ error: error.message });
@@ -946,6 +992,82 @@ async function requireAdmin(req, res, next) {
   }
   next();
 }
+
+// --- Google OAuth verification ---
+app.post("/api/auth/verify-google", async (req, res) => {
+  const { credential } = req.body;
+  if (!credential) return res.status(400).json({ error: "credential is required" });
+
+  try {
+    // Verify token with Google
+    const verifyRes = await fetch(
+      `https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`
+    );
+    if (!verifyRes.ok) return res.status(401).json({ error: "Invalid token" });
+    const payload = await verifyRes.json();
+
+    if (!payload.email || payload.email_verified !== "true") {
+      return res.status(401).json({ error: "Email not verified" });
+    }
+
+    // Check if user is a global admin
+    const { data: admin } = await supabase
+      .from("global_admins")
+      .select("*")
+      .eq("email", payload.email.toLowerCase())
+      .single();
+
+    res.json({
+      authorized: !!admin,
+      email: payload.email.toLowerCase(),
+      name: payload.name || "",
+      picture: payload.picture || "",
+    });
+  } catch (err) {
+    console.error("Google auth error:", err);
+    res.status(500).json({ error: "Authentication failed" });
+  }
+});
+
+// --- Global Admins ---
+app.get("/api/global-admins", async (req, res) => {
+  const { data, error } = await supabase
+    .from("global_admins")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+app.post("/api/global-admins", async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: "email is required" });
+  const { data, error } = await supabase
+    .from("global_admins")
+    .insert({ email: email.toLowerCase() })
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.delete("/api/global-admins/:id", async (req, res) => {
+  const { id } = req.params;
+  const { error } = await supabase.from("global_admins").delete().eq("id", id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// --- Bulk delete guests ---
+app.post("/api/events/:eventId/guests/bulk-delete", requireAdmin, async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: "ids array is required" });
+  }
+  const { error } = await supabase.from("guests").delete().in("id", ids);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, deleted: ids.length });
+});
 
 // --- Authorized Users ---
 app.get("/api/authorized-users", async (req, res) => {

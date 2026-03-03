@@ -3,6 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0a0a0b" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%230a0a0b' width='100' height='100' rx='20'/><text y='70' x='50' text-anchor='middle' font-size='60'>🎫</text></svg>" />
   <title>GuestList</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,500;0,9..40,700;1,9..40,300&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -654,6 +660,7 @@
 <body>
   <div id="root"></div>
 
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.5/babel.min.js"></script>
@@ -668,6 +675,7 @@
       API_URL: "https://guestlist-app-production.up.railway.app",
       SUPABASE_URL: "https://wzdqwrckzeletieemiff.supabase.co",
       SUPABASE_ANON_KEY: "sb_publishable_wYlMVDSJJWKEnUxIus7inQ_1gCTfEo8",
+      GOOGLE_CLIENT_ID: "", // Set your Google OAuth Client ID here
     };
 
     // ============================================================
@@ -824,6 +832,8 @@
       const [editVip, setEditVip] = useState(false);
       const [editNotes, setEditNotes] = useState("");
       const [editPlusCount, setEditPlusCount] = useState(0);
+      const [selectMode, setSelectMode] = useState(false);
+      const [selectedIds, setSelectedIds] = useState(new Set());
 
       const adminHeaders = {
         "Content-Type": "application/json",
@@ -867,13 +877,62 @@
         return null;
       };
 
+      const parseName = (raw) => {
+        let name = raw.trim();
+        let isVip = addVip;
+        let notes = addNotes || "";
+        let plusCount = 0;
+
+        // Extract plus count: "+2", "+ 2", "plus 2"
+        const plusMatch = name.match(/\+\s*(\d+)|\bplus\s+(\d+)/i);
+        if (plusMatch) {
+          plusCount = parseInt(plusMatch[1] || plusMatch[2]);
+          name = name.replace(plusMatch[0], "").trim();
+        }
+
+        // Extract notes in parentheses (but not "(VIP)")
+        const parenMatch = name.match(/\(([^)]+)\)/g);
+        if (parenMatch) {
+          const extracted = [];
+          for (const p of parenMatch) {
+            const inner = p.slice(1, -1).trim();
+            if (inner.toLowerCase() === "vip") {
+              isVip = true;
+            } else {
+              extracted.push(inner);
+            }
+            name = name.replace(p, "").trim();
+          }
+          if (extracted.length > 0) {
+            notes = notes ? notes + "; " + extracted.join("; ") : extracted.join("; ");
+          }
+        }
+
+        // Check for standalone VIP in name
+        if (/\bvip\b/i.test(name)) {
+          isVip = true;
+          name = name.replace(/\bvip\b/i, "").trim();
+        }
+
+        // Clean up extra whitespace and dashes at edges
+        name = name.replace(/\s+/g, " ").replace(/^[-–—\s]+|[-–—\s]+$/g, "").trim();
+
+        // Title case: "john doe" -> "John Doe"
+        if (name === name.toLowerCase() || name === name.toUpperCase()) {
+          name = name.replace(/\b\w/g, c => c.toUpperCase());
+        }
+
+        return { name, is_vip: isVip, notes: notes || null, plus_count: plusCount };
+      };
+
       const handleAddGuests = () => {
         const lines = addNames.split("\n").map(l => l.trim()).filter(l => l.length > 0);
         if (lines.length === 0) return;
 
-        const preview = lines.map(name => {
-          const matchedName = findDuplicate(name, guests || []);
-          return { name, isDuplicate: !!matchedName, matchedName, selected: !matchedName };
+        const parsed = lines.map(parseName);
+        const preview = parsed.map(p => {
+          const matchedName = findDuplicate(p.name, guests || []);
+          return { ...p, isDuplicate: !!matchedName, matchedName, selected: !matchedName };
         });
 
         // Check for duplicates within the batch itself
@@ -893,7 +952,7 @@
         const hasDuplicates = preview.some(p => p.isDuplicate);
 
         if (lines.length === 1 && !hasDuplicates) {
-          submitGuests([{ name: lines[0], is_vip: addVip, notes: addNotes || null }]);
+          submitGuests([parsed[0]]);
         } else {
           setBulkPreview(preview);
         }
@@ -908,6 +967,7 @@
               name: guestList[0].name,
               is_vip: guestList[0].is_vip || false,
               notes: guestList[0].notes || null,
+              plus_count: guestList[0].plus_count || 0,
             }),
           });
         } else {
@@ -928,7 +988,9 @@
       const confirmBulkAdd = () => {
         const selected = bulkPreview.filter(p => p.selected);
         if (selected.length === 0) { setBulkPreview(null); return; }
-        submitGuests(selected.map(p => ({ name: p.name, is_vip: addVip, notes: addNotes || null })));
+        submitGuests(selected.map(p => ({
+          name: p.name, is_vip: p.is_vip, notes: p.notes, plus_count: p.plus_count || 0,
+        })));
       };
 
       const handleDeleteGuest = async (e, guestId) => {
@@ -938,6 +1000,36 @@
           method: "DELETE",
           headers: { "x-admin-pin": adminPin || "" },
         });
+        refetch();
+      };
+
+      const toggleSelect = (guestId) => {
+        setSelectedIds(prev => {
+          const next = new Set(prev);
+          if (next.has(guestId)) next.delete(guestId);
+          else next.add(guestId);
+          return next;
+        });
+      };
+
+      const selectAllFiltered = () => {
+        setSelectedIds(new Set(filtered.map(g => g.id)));
+      };
+
+      const clearSelection = () => {
+        setSelectedIds(new Set());
+        setSelectMode(false);
+      };
+
+      const handleBulkDelete = async () => {
+        if (selectedIds.size === 0) return;
+        if (!confirm(`Delete ${selectedIds.size} selected guests?`)) return;
+        await fetch(`${CONFIG.API_URL}/api/events/${eventId}/guests/bulk-delete`, {
+          method: "POST",
+          headers: adminHeaders,
+          body: JSON.stringify({ ids: Array.from(selectedIds) }),
+        });
+        clearSelection();
         refetch();
       };
 
@@ -1035,14 +1127,33 @@
           </div>
 
           {/* Admin Toolbar */}
-          {isAdmin && (
+          {isAdmin && !selectMode && (
             <div className="admin-toolbar">
               <span className="role-badge admin">ADMIN</span>
               <button className="btn btn-outline btn-sm" onClick={() => setShowAddForm(!showAddForm)}>
                 {showAddForm ? "Cancel" : "+ Add Guest"}
               </button>
+              <button className="btn btn-outline btn-sm" onClick={() => { setSelectMode(true); setSelectedIds(new Set()); }}>
+                Select
+              </button>
               <button className="btn btn-outline btn-sm" onClick={handleExportCSV}>
                 Export CSV
+              </button>
+            </div>
+          )}
+          {isAdmin && selectMode && (
+            <div className="admin-toolbar" style={{ background: "var(--surface)", padding: "8px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--accent)" }}>
+              <span style={{ fontSize: 12, color: "var(--text-dim)" }}>{selectedIds.size} selected</span>
+              <button className="btn btn-outline btn-sm" onClick={selectAllFiltered}>
+                Select All ({filtered.length})
+              </button>
+              {selectedIds.size > 0 && (
+                <button className="btn btn-sm btn-danger" onClick={handleBulkDelete}>
+                  Delete Selected
+                </button>
+              )}
+              <button className="btn btn-sm btn-ghost" onClick={clearSelection}>
+                Cancel
               </button>
             </div>
           )}
@@ -1127,12 +1238,18 @@
                   key={guest.id}
                   className={`guest-row ${guest.is_checked_in ? "checked-in" : ""} ${
                     guest.is_duplicate_flag ? "duplicate" : ""
-                  }`}
-                  onClick={() => handleCheckin(guest.id, guest.is_checked_in)}
+                  } ${selectMode && selectedIds.has(guest.id) ? "selected" : ""}`}
+                  onClick={() => selectMode ? toggleSelect(guest.id) : handleCheckin(guest.id, guest.is_checked_in)}
                 >
-                  <div className="check-circle">
-                    {guest.is_checked_in ? "✓" : ""}
-                  </div>
+                  {selectMode ? (
+                    <div className="check-circle" style={selectedIds.has(guest.id) ? { background: "var(--accent)", borderColor: "var(--accent)", color: "var(--bg)" } : {}}>
+                      {selectedIds.has(guest.id) ? "✓" : ""}
+                    </div>
+                  ) : (
+                    <div className="check-circle">
+                      {guest.is_checked_in ? "✓" : ""}
+                    </div>
+                  )}
                   <div className="guest-info">
                     <div className="guest-name">{guest.name}</div>
                     <div className="guest-meta">
@@ -1220,7 +1337,12 @@
                         }}
                       />
                       <div>
-                        <div>{item.name}</div>
+                        <div>
+                          {item.name}
+                          {item.plus_count > 0 && <span style={{ color: "var(--accent-dim)", fontSize: 12 }}> +{item.plus_count}</span>}
+                          {item.is_vip && <span style={{ color: "var(--vip)", fontSize: 10, marginLeft: 6, fontWeight: 700 }}>VIP</span>}
+                        </div>
+                        {item.notes && <div style={{ fontSize: 11, color: "var(--text-faint)" }}>{item.notes}</div>}
                         {item.isDuplicate && (
                           <div className="dup-note">Possible duplicate of "{item.matchedName}"</div>
                         )}
@@ -1242,15 +1364,104 @@
     }
 
     // ============================================================
-    // ADMIN VIEW
+    // ADMIN VIEW (with Google OAuth)
     // ============================================================
     function AdminView() {
+      const [adminAuth, setAdminAuth] = useState(() => {
+        try {
+          const saved = localStorage.getItem("guestlist_admin");
+          return saved ? JSON.parse(saved) : null;
+        } catch { return null; }
+      });
+      const [authError, setAuthError] = useState("");
+      const googleBtnRef = useRef(null);
+
+      // Initialize Google Sign-In
+      useEffect(() => {
+        if (adminAuth) return;
+        const initGoogle = () => {
+          if (!window.google?.accounts?.id || !CONFIG.GOOGLE_CLIENT_ID) return;
+          window.google.accounts.id.initialize({
+            client_id: CONFIG.GOOGLE_CLIENT_ID,
+            callback: handleGoogleResponse,
+          });
+          if (googleBtnRef.current) {
+            window.google.accounts.id.renderButton(googleBtnRef.current, {
+              theme: "filled_black",
+              size: "large",
+              width: 280,
+            });
+          }
+        };
+        // Google script may not be loaded yet
+        if (window.google?.accounts?.id) initGoogle();
+        else {
+          const timer = setInterval(() => {
+            if (window.google?.accounts?.id) { initGoogle(); clearInterval(timer); }
+          }, 200);
+          return () => clearInterval(timer);
+        }
+      }, [adminAuth]);
+
+      const handleGoogleResponse = async (response) => {
+        try {
+          setAuthError("");
+          const res = await fetch(`${CONFIG.API_URL}/api/auth/verify-google`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ credential: response.credential }),
+          });
+          const data = await res.json();
+          if (data.authorized) {
+            const auth = { email: data.email, name: data.name, picture: data.picture };
+            setAdminAuth(auth);
+            localStorage.setItem("guestlist_admin", JSON.stringify(auth));
+          } else {
+            setAuthError(`${data.email} is not an authorized admin. Ask an existing admin to add your email.`);
+          }
+        } catch (err) {
+          setAuthError("Authentication failed. Please try again.");
+        }
+      };
+
+      const handleLogout = () => {
+        setAdminAuth(null);
+        localStorage.removeItem("guestlist_admin");
+      };
+
+      // If no Google Client ID configured, skip auth
+      if (!CONFIG.GOOGLE_CLIENT_ID && !adminAuth) {
+        return <AdminPanel onLogout={null} adminEmail={null} />;
+      }
+
+      if (!adminAuth) {
+        return (
+          <div style={{ textAlign: "center", padding: "60px 20px" }}>
+            <h2 style={{ fontFamily: "var(--mono)", color: "var(--accent)", marginBottom: 8 }}>ADMIN LOGIN</h2>
+            <p style={{ color: "var(--text-dim)", marginBottom: 24, fontSize: 14 }}>Sign in with Google to access the admin panel</p>
+            <div ref={googleBtnRef} style={{ display: "inline-block" }} />
+            {!CONFIG.GOOGLE_CLIENT_ID && (
+              <p style={{ color: "var(--text-faint)", marginTop: 16, fontSize: 12 }}>Google Client ID not configured</p>
+            )}
+            {authError && <p style={{ color: "var(--danger)", marginTop: 16, fontSize: 13 }}>{authError}</p>}
+          </div>
+        );
+      }
+
+      return <AdminPanel onLogout={handleLogout} adminEmail={adminAuth.email} adminName={adminAuth.name} />;
+    }
+
+    function AdminPanel({ onLogout, adminEmail, adminName }) {
       const { data: events, refetch: refetchEvents } = usePolling(
         `${CONFIG.API_URL}/api/events`,
         5000
       );
       const { data: authUsers, refetch: refetchUsers } = usePolling(
         `${CONFIG.API_URL}/api/authorized-users`,
+        5000
+      );
+      const { data: globalAdmins, refetch: refetchAdmins } = usePolling(
+        `${CONFIG.API_URL}/api/global-admins`,
         5000
       );
 
@@ -1263,6 +1474,9 @@
       // Auth user form
       const [userName, setUserName] = useState("");
       const [userPhone, setUserPhone] = useState("");
+
+      // Admin email form
+      const [newAdminEmail, setNewAdminEmail] = useState("");
 
       const createEvent = async () => {
         if (!eventName || !eventPin || !eventAdminPin) return;
@@ -1323,6 +1537,22 @@
         refetchEvents();
       };
 
+      const addAdminEmail = async () => {
+        if (!newAdminEmail || !newAdminEmail.includes("@")) return;
+        await fetch(`${CONFIG.API_URL}/api/global-admins`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: newAdminEmail.trim() }),
+        });
+        setNewAdminEmail("");
+        refetchAdmins();
+      };
+
+      const removeAdmin = async (id) => {
+        await fetch(`${CONFIG.API_URL}/api/global-admins/${id}`, { method: "DELETE" });
+        refetchAdmins();
+      };
+
       const addAuthUser = async () => {
         if (!userPhone) return;
         await fetch(`${CONFIG.API_URL}/api/authorized-users`, {
@@ -1347,6 +1577,14 @@
 
       return (
         <div>
+          {/* Logged-in admin info */}
+          {onLogout && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, padding: "8px 12px", background: "var(--surface)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+              <span style={{ fontSize: 12, color: "var(--text-dim)" }}>{adminName || adminEmail}</span>
+              <button className="btn btn-sm btn-ghost" onClick={onLogout}>Sign Out</button>
+            </div>
+          )}
+
           {/* Create Event */}
           <div className="admin-section">
             <h2>Create Event</h2>
@@ -1449,7 +1687,34 @@
             </div>
           )}
 
-          {/* Authorized Users */}
+          {/* Global Admins */}
+          <div className="admin-section">
+            <h2>Admin Emails (Google Login)</h2>
+            <div className="admin-form">
+              <input
+                className="admin-input"
+                placeholder="admin@example.com"
+                type="email"
+                value={newAdminEmail}
+                onChange={(e) => setNewAdminEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addAdminEmail()}
+              />
+              <button className="btn" onClick={addAdminEmail}>Add</button>
+            </div>
+            {(globalAdmins || []).map((admin) => (
+              <div className="admin-list-item" key={admin.id}>
+                <div className="name">{admin.email}</div>
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={() => removeAdmin(admin.id)}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Authorized SMS Users */}
           <div className="admin-section">
             <h2>Authorized SMS Users</h2>
             <div className="admin-form">
@@ -1512,6 +1777,7 @@
       };
 
       const handleBack = () => {
+        setActiveTab("checkin");
         setView("events");
         setSelectedEventId(null);
         setEventName("");
