@@ -1081,12 +1081,48 @@
         refetchEvents();
       };
 
+      // Edit event state
+      const [editEvent, setEditEvent] = useState(null);
+      const [editEvName, setEditEvName] = useState("");
+      const [editEvDate, setEditEvDate] = useState("");
+      const [editEvPin, setEditEvPin] = useState("");
+      const [editEvAdminPin, setEditEvAdminPin] = useState("");
+
       const toggleEvent = async (id, isActive) => {
         await fetch(`${CONFIG.API_URL}/api/events/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ is_active: !isActive }),
         });
+        refetchEvents();
+      };
+
+      const openEditEvent = (event) => {
+        setEditEvent(event);
+        setEditEvName(event.name);
+        setEditEvDate(event.date || "");
+        setEditEvPin("");
+        setEditEvAdminPin("");
+      };
+
+      const saveEditEvent = async () => {
+        if (!editEvent) return;
+        const updates = { name: editEvName.trim() };
+        if (editEvDate) updates.date = editEvDate;
+        if (editEvPin) updates.pin = editEvPin;
+        if (editEvAdminPin) updates.admin_pin = editEvAdminPin;
+        await fetch(`${CONFIG.API_URL}/api/events/${editEvent.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        });
+        setEditEvent(null);
+        refetchEvents();
+      };
+
+      const deleteEvent = async (id, name) => {
+        if (!confirm(`Delete "${name}" and all its guests? This cannot be undone.`)) return;
+        await fetch(`${CONFIG.API_URL}/api/events/${id}`, { method: "DELETE" });
         refetchEvents();
       };
 
@@ -1157,22 +1193,64 @@
           <div className="admin-section">
             <h2>Events</h2>
             {(events || []).map((event) => (
-              <div className="admin-list-item" key={event.id}>
-                <div>
+              <div className="admin-list-item" key={event.id} style={{ gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="name">{event.name}</div>
                   <div className="detail">
                     {event.date ? new Date(event.date).toLocaleDateString() : "No date set"}
+                    {event.is_active ? " · Active" : " · Inactive"}
                   </div>
                 </div>
-                <button
-                  className={`btn btn-sm ${event.is_active ? "btn-danger" : ""}`}
-                  onClick={() => toggleEvent(event.id, event.is_active)}
-                >
-                  {event.is_active ? "Deactivate" : "Activate"}
-                </button>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button className="btn btn-sm btn-ghost" onClick={() => openEditEvent(event)}>Edit</button>
+                  <button
+                    className={`btn btn-sm ${event.is_active ? "btn-danger" : ""}`}
+                    onClick={() => toggleEvent(event.id, event.is_active)}
+                  >
+                    {event.is_active ? "Deactivate" : "Activate"}
+                  </button>
+                  <button className="btn btn-sm btn-danger" onClick={() => deleteEvent(event.id, event.name)}>Delete</button>
+                </div>
               </div>
             ))}
           </div>
+
+          {/* Edit Event Modal */}
+          {editEvent && (
+            <div className="modal-overlay" onClick={() => setEditEvent(null)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Edit Event</h3>
+                <div className="form-group">
+                  <label>Event Name</label>
+                  <input value={editEvName} onChange={(e) => setEditEvName(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label>Date</label>
+                  <input type="date" value={editEvDate} onChange={(e) => setEditEvDate(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label>New User PIN (leave blank to keep current)</label>
+                  <input
+                    placeholder="Enter new user PIN"
+                    value={editEvPin}
+                    onChange={(e) => setEditEvPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>New Admin PIN (leave blank to keep current)</label>
+                  <input
+                    placeholder="Enter new admin PIN"
+                    value={editEvAdminPin}
+                    onChange={(e) => setEditEvAdminPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  />
+                </div>
+                <div className="modal-actions">
+                  <button className="btn btn-ghost" onClick={() => setEditEvent(null)}>Cancel</button>
+                  <button className="btn" onClick={saveEditEvent}>Save</button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Authorized Users */}
           <div className="admin-section">
