@@ -1483,6 +1483,70 @@ const INVITE_PAGE_HTML = `<!DOCTYPE html>
       render();
     }
 
+    // Clean and format a guest name: trim, title case, remove junk
+    function cleanName(raw) {
+      var name = raw.trim();
+      // Remove leading numbers, bullets, dashes (list formatting)
+      name = name.replace(/^[\\d]+[.)\\-:\\s]+/, "");
+      name = name.replace(/^[-–—•*·\\s]+/, "");
+      // Remove trailing commas, semicolons
+      name = name.replace(/[,;]+$/, "");
+      // Collapse whitespace
+      name = name.replace(/\\s+/g, " ").trim();
+      if (!name) return "";
+      // Title case if all lower or all upper
+      if (name === name.toLowerCase() || name === name.toUpperCase()) {
+        name = name.replace(/\\b\\w/g, function(c) { return c.toUpperCase(); });
+      }
+      return name;
+    }
+
+    // Handle paste: detect multi-line paste, split into names, clean, and fill rows
+    function handlePaste(e, rowIndex) {
+      var pasted = (e.clipboardData || window.clipboardData).getData("text");
+      if (!pasted) return;
+      // Split on newlines, commas, or semicolons
+      var lines = pasted.split(/[\\n\\r,;]+/).map(cleanName).filter(function(n) { return n.length > 0; });
+      // If only one name (no multi-line), let normal paste happen
+      if (lines.length <= 1) return;
+      e.preventDefault();
+      // Merge: replace current row + add new rows for the rest
+      var before = guestNames.slice(0, rowIndex);
+      var after = guestNames.slice(rowIndex + 1).filter(function(n) { return n.trim().length > 0; });
+      var merged = before.concat(lines).concat(after);
+      // Deduplicate (case-insensitive)
+      var seen = {};
+      var deduped = [];
+      for (var i = 0; i < merged.length; i++) {
+        var key = merged[i].toLowerCase();
+        if (!seen[key]) {
+          seen[key] = true;
+          deduped.push(merged[i]);
+        }
+      }
+      if (deduped.length > invite.max_guests) {
+        // Take what fits, show error
+        guestNames = deduped.slice(0, invite.max_guests);
+        statusMsg = "Pasted " + deduped.length + " names but max is " + invite.max_guests + ". Only the first " + invite.max_guests + " were kept.";
+        statusType = "error";
+      } else {
+        guestNames = deduped;
+        statusMsg = "Pasted " + lines.length + " names.";
+        statusType = "success";
+      }
+      if (guestNames.length === 0) guestNames = [""];
+      render();
+    }
+
+    // Clean name on blur (tab/click away)
+    function handleBlur(i, el) {
+      var cleaned = cleanName(guestNames[i]);
+      if (cleaned !== guestNames[i]) {
+        guestNames[i] = cleaned;
+        el.value = cleaned;
+      }
+    }
+
     function updateName(i, val) {
       guestNames[i] = val;
       // Re-render counter only
@@ -1493,7 +1557,9 @@ const INVITE_PAGE_HTML = `<!DOCTYPE html>
 
     async function saveGuests() {
       if (saving) return;
-      var names = guestNames.filter(function(n) { return n.trim().length > 0; });
+      // Clean all names before saving
+      guestNames = guestNames.map(cleanName);
+      var names = guestNames.filter(function(n) { return n.length > 0; });
       if (names.length > invite.max_guests) {
         statusMsg = "You can only add up to " + invite.max_guests + " guests.";
         statusType = "error";
@@ -1559,7 +1625,7 @@ const INVITE_PAGE_HTML = `<!DOCTYPE html>
         for (var i = 0; i < guestNames.length; i++) {
           html += '<div class="guest-row-input">';
           html += '<span class="idx">' + (i + 1) + '.</span>';
-          html += '<input type="text" placeholder="Guest name" value="' + esc(guestNames[i]) + '" oninput="updateName(' + i + ', this.value)" />';
+          html += '<input type="text" placeholder="Guest name" value="' + esc(guestNames[i]) + '" oninput="updateName(' + i + ', this.value)" onpaste="handlePaste(event, ' + i + ')" onblur="handleBlur(' + i + ', this)" />';
           if (guestNames.length > 1) {
             html += '<button class="remove-btn" onclick="removeRow(' + i + ')" title="Remove">&times;</button>';
           }
