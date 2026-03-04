@@ -1660,7 +1660,7 @@
 
       const [copiedAll, setCopiedAll] = useState(false);
       const copyAllInviteLinks = () => {
-        const text = talentList.map((t) => `${t.name}: ${CONFIG.FRONTEND_URL}/invite/${t.token}`).join("\n");
+        const text = talentList.map((t) => `${CONFIG.FRONTEND_URL}/invite/${t.token}`).join("\n");
         navigator.clipboard.writeText(text).then(() => {
           setCopiedAll(true);
           setTimeout(() => setCopiedAll(false), 2000);
