@@ -379,7 +379,7 @@
       margin-bottom: 12px;
     }
     .admin-input {
-      flex: 1 1 auto;
+      flex: 1;
       min-width: 0;
       background: var(--surface);
       border: 1px solid var(--border);
@@ -1684,7 +1684,7 @@
           {/* Create Event */}
           <div className="admin-section">
             <h2>Create Event</h2>
-            <div className="admin-form" style={{ flexWrap: "wrap" }}>
+            <div className="admin-form">
               <input
                 className="admin-input"
                 placeholder="Event name"
@@ -1705,16 +1705,16 @@
                 placeholder="User PIN (4-6 digits)"
                 value={eventPin}
                 onChange={(e) => setEventPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                style={{ maxWidth: 140 }}
               />
               <input
                 className="admin-input"
                 placeholder="Admin PIN (4-6 digits)"
                 value={eventAdminPin}
                 onChange={(e) => setEventAdminPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                style={{ maxWidth: 140 }}
               />
-              <button className="btn" onClick={createEvent}>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <button className="btn" style={{ width: "100%" }} onClick={createEvent}>
                 Create
               </button>
             </div>
@@ -1732,7 +1732,7 @@
                     {event.is_active ? " · Active" : " · Inactive"}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", flexShrink: 0 }}>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                   <button className="btn btn-sm btn-outline" onClick={() => openTalent(event)}>External Lists</button>
                   <button className="btn btn-sm btn-ghost" onClick={() => openEditEvent(event)}>Edit</button>
                   <button
@@ -1956,7 +1956,9 @@
                 value={userPhone}
                 onChange={(e) => setUserPhone(e.target.value)}
               />
-              <button className="btn" onClick={addAuthUser}>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <button className="btn" style={{ width: "100%" }} onClick={addAuthUser}>
                 Add
               </button>
             </div>
