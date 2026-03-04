@@ -640,13 +640,27 @@ app.get("/", (req, res) => {
 
 const crypto = require("crypto");
 
+function slugify(name) {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function generateInviteToken(name) {
+  const slug = slugify(name) || "guest";
+  const rand = crypto.randomBytes(8).toString("hex");
+  return `${slug}-${rand}`;
+}
+
 // --- Create talent allocation for an event ---
 app.post("/api/events/:eventId/talent", requireAdmin, async (req, res) => {
   const { eventId } = req.params;
   const { name, max_guests, deadline } = req.body;
   if (!name || !max_guests) return res.status(400).json({ error: "name and max_guests are required" });
 
-  const token = crypto.randomBytes(16).toString("hex");
+  const token = generateInviteToken(name);
 
   const { data, error } = await supabase
     .from("talent_allocations")
@@ -684,6 +698,12 @@ app.patch("/api/events/:eventId/talent/:id", requireAdmin, async (req, res) => {
   for (const key of allowed) {
     if (req.body[key] !== undefined) updates[key] = req.body[key];
   }
+
+  // If name changed, regenerate token so URL reflects the new name
+  if (updates.name) {
+    updates.token = generateInviteToken(updates.name);
+  }
+
   const { data, error } = await supabase
     .from("talent_allocations")
     .update(updates)
