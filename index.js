@@ -1448,7 +1448,7 @@ const INVITE_PAGE_HTML = `<!DOCTYPE html>
     function formatDate(d) {
       if (!d) return "";
       var date = new Date(d);
-      return date.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      return date.toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", year: "numeric", month: "long", day: "numeric" });
     }
 
     function formatDeadline(d) {
@@ -1457,11 +1457,12 @@ const INVITE_PAGE_HTML = `<!DOCTYPE html>
       var now = new Date();
       var diff = date - now;
       var days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-      var formatted = date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-      var time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      var opts = { timeZone: "America/New_York" };
+      var formatted = date.toLocaleDateString("en-US", Object.assign({ month: "short", day: "numeric", year: "numeric" }, opts));
+      var time = date.toLocaleTimeString("en-US", Object.assign({ hour: "numeric", minute: "2-digit" }, opts));
       if (diff < 0) return "Closed " + formatted;
-      if (days <= 1) return "Due today by " + time;
-      if (days <= 3) return "Due " + formatted + " at " + time;
+      if (days <= 1) return "Due today by " + time + " ET";
+      if (days <= 3) return "Due " + formatted + " at " + time + " ET";
       return "Due " + formatted;
     }
 
