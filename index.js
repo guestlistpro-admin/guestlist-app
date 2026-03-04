@@ -1442,6 +1442,8 @@ const INVITE_PAGE_HTML = `<!DOCTYPE html>
     let statusMsg = null;
     let statusType = "";
     let loaded = false;
+    let showBulkAdd = false;
+    let bulkText = "";
 
     async function loadInvite() {
       try {
@@ -1567,6 +1569,50 @@ const INVITE_PAGE_HTML = `<!DOCTYPE html>
       }
     }
 
+    function toggleBulkAdd() {
+      showBulkAdd = !showBulkAdd;
+      bulkText = "";
+      render();
+      if (showBulkAdd) {
+        setTimeout(function() {
+          var ta = document.getElementById("bulk-textarea");
+          if (ta) ta.focus();
+        }, 50);
+      }
+    }
+
+    function submitBulkNames() {
+      if (!bulkText.trim()) return;
+      var lines = bulkText.split(/[\\n\\r,;]+/).map(cleanName).filter(function(n) { return n.length > 0; });
+      if (lines.length === 0) return;
+      // Merge with existing non-empty names
+      var existing = guestNames.filter(function(n) { return n.trim().length > 0; });
+      var merged = existing.concat(lines);
+      // Deduplicate
+      var seen = {};
+      var deduped = [];
+      for (var i = 0; i < merged.length; i++) {
+        var key = merged[i].toLowerCase();
+        if (!seen[key]) {
+          seen[key] = true;
+          deduped.push(merged[i]);
+        }
+      }
+      if (deduped.length > invite.max_guests) {
+        guestNames = deduped.slice(0, invite.max_guests);
+        statusMsg = "Added " + lines.length + " names but max is " + invite.max_guests + ". Only the first " + invite.max_guests + " were kept.";
+        statusType = "error";
+      } else {
+        guestNames = deduped;
+        statusMsg = "Added " + lines.length + " name" + (lines.length === 1 ? "" : "s") + ".";
+        statusType = "success";
+      }
+      if (guestNames.length === 0) guestNames = [""];
+      showBulkAdd = false;
+      bulkText = "";
+      render();
+    }
+
     function updateName(i, val) {
       guestNames[i] = val;
       // Re-render counter only
@@ -1655,6 +1701,13 @@ const INVITE_PAGE_HTML = `<!DOCTYPE html>
         html += '<div class="actions">';
         if (guestNames.length < invite.max_guests) {
           html += '<button class="btn btn-ghost" onclick="addRow()">+ Add another guest</button>';
+          html += '<button class="btn btn-ghost" onclick="toggleBulkAdd()" style="font-size:13px">' + (showBulkAdd ? 'Cancel' : '+ Add multiple names') + '</button>';
+        }
+        if (showBulkAdd) {
+          html += '<div style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px">';
+          html += '<textarea id="bulk-textarea" oninput="bulkText=this.value" placeholder="Paste or type names here, one per line&#10;&#10;e.g.&#10;John Smith&#10;Jane Doe&#10;Mike Jones" style="width:100%;min-height:120px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-family:var(--font);font-size:14px;color:var(--text);outline:none;resize:vertical"></textarea>';
+          html += '<button class="btn" onclick="submitBulkNames()" style="width:100%;margin-top:8px;font-size:13px">Add Names</button>';
+          html += '</div>';
         }
         html += '<button class="btn" onclick="saveGuests()" ' + (saving ? 'disabled' : '') + '>' + (saving ? 'Saving...' : 'Save Guest List') + '</button>';
         html += '</div>';
