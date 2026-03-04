@@ -1554,6 +1554,61 @@
         refetchUsers();
       };
 
+      // Talent management state
+      const [talentEventId, setTalentEventId] = useState(null);
+      const [talentEventName, setTalentEventName] = useState("");
+      const [talentList, setTalentList] = useState([]);
+      const [talentName, setTalentName] = useState("");
+      const [talentMaxGuests, setTalentMaxGuests] = useState("5");
+      const [talentDeadline, setTalentDeadline] = useState("");
+      const [copiedToken, setCopiedToken] = useState(null);
+
+      const openTalent = async (event) => {
+        setTalentEventId(event.id);
+        setTalentEventName(event.name);
+        setTalentDeadline(event.date ? event.date + "T00:00" : "");
+        await fetchTalent(event.id);
+      };
+
+      const fetchTalent = async (eventId) => {
+        const res = await fetch(`${CONFIG.API_URL}/api/events/${eventId}/talent`);
+        const data = await res.json();
+        setTalentList(data || []);
+      };
+
+      const addTalent = async () => {
+        if (!talentName || !talentMaxGuests || !talentEventId) return;
+        await fetch(`${CONFIG.API_URL}/api/events/${talentEventId}/talent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(adminEmail ? { "x-admin-email": adminEmail } : {}) },
+          body: JSON.stringify({
+            name: talentName.trim(),
+            max_guests: parseInt(talentMaxGuests),
+            deadline: talentDeadline || null,
+          }),
+        });
+        setTalentName("");
+        setTalentMaxGuests("5");
+        await fetchTalent(talentEventId);
+      };
+
+      const removeTalent = async (id) => {
+        if (!confirm("Remove this person and all their submitted guests?")) return;
+        await fetch(`${CONFIG.API_URL}/api/events/${talentEventId}/talent/${id}`, {
+          method: "DELETE",
+          headers: { ...(adminEmail ? { "x-admin-email": adminEmail } : {}) },
+        });
+        await fetchTalent(talentEventId);
+      };
+
+      const copyInviteLink = (token) => {
+        const link = `${CONFIG.API_URL}/invite/${token}`;
+        navigator.clipboard.writeText(link).then(() => {
+          setCopiedToken(token);
+          setTimeout(() => setCopiedToken(null), 2000);
+        });
+      };
+
       return (
         <div>
           {/* Logged-in admin info */}
@@ -1615,7 +1670,8 @@
                     {event.is_active ? " · Active" : " · Inactive"}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 4 }}>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  <button className="btn btn-sm btn-outline" onClick={() => openTalent(event)}>Talent</button>
                   <button className="btn btn-sm btn-ghost" onClick={() => openEditEvent(event)}>Edit</button>
                   <button
                     className={`btn btn-sm ${event.is_active ? "btn-danger" : ""}`}
@@ -1661,6 +1717,90 @@
                 <div className="modal-actions">
                   <button className="btn btn-ghost" onClick={() => setEditEvent(null)}>Cancel</button>
                   <button className="btn" onClick={saveEditEvent}>Save</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Talent / Team Guest Lists Modal */}
+          {talentEventId && (
+            <div className="modal-overlay" onClick={() => setTalentEventId(null)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480, maxHeight: "90vh", overflowY: "auto" }}>
+                <h3>Talent Guest Lists — {talentEventName}</h3>
+                <p style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 16 }}>
+                  Add talent/team members and generate unique links for them to submit their guest lists.
+                </p>
+
+                {/* Add talent form */}
+                <div style={{ display: "flex", gap: 6, marginBottom: 4 }}>
+                  <input
+                    style={{ flex: 1, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "8px 10px", fontFamily: "var(--font)", fontSize: 13, color: "var(--text)", outline: "none" }}
+                    placeholder="Name (e.g. DJ Mike)"
+                    value={talentName}
+                    onChange={(e) => setTalentName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && addTalent()}
+                  />
+                  <input
+                    style={{ width: 60, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "8px 6px", fontFamily: "var(--font)", fontSize: 13, color: "var(--text)", outline: "none", textAlign: "center" }}
+                    placeholder="Max"
+                    type="number"
+                    min="1"
+                    value={talentMaxGuests}
+                    onChange={(e) => setTalentMaxGuests(e.target.value)}
+                  />
+                  <button className="btn btn-sm" onClick={addTalent}>Add</button>
+                </div>
+                <div style={{ display: "flex", gap: 6, marginBottom: 16, alignItems: "center" }}>
+                  <label style={{ fontSize: 11, color: "var(--text-faint)", whiteSpace: "nowrap" }}>Deadline:</label>
+                  <input
+                    type="datetime-local"
+                    style={{ flex: 1, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "6px 8px", fontFamily: "var(--font)", fontSize: 12, color: "var(--text)", outline: "none" }}
+                    value={talentDeadline}
+                    onChange={(e) => setTalentDeadline(e.target.value)}
+                  />
+                </div>
+
+                {/* Talent list */}
+                {talentList.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text-faint)", fontSize: 13 }}>
+                    No talent added yet. Add someone above to generate their invite link.
+                  </div>
+                ) : (
+                  talentList.map((t) => (
+                    <div key={t.id} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "10px 12px", marginBottom: 6 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <div>
+                          <span style={{ fontWeight: 600, fontSize: 14 }}>{t.name}</span>
+                          <span style={{ fontSize: 11, color: "var(--text-dim)", marginLeft: 8 }}>up to {t.max_guests} guests</span>
+                        </div>
+                        <button className="btn btn-sm btn-danger" onClick={() => removeTalent(t.id)} style={{ padding: "4px 8px", fontSize: 10 }}>Remove</button>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <input
+                          readOnly
+                          value={`${CONFIG.API_URL}/invite/${t.token}`}
+                          style={{ flex: 1, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "6px 8px", fontFamily: "var(--mono)", fontSize: 10, color: "var(--text-dim)", outline: "none" }}
+                          onClick={(e) => e.target.select()}
+                        />
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          onClick={() => copyInviteLink(t.token)}
+                          style={{ padding: "4px 10px", fontSize: 11 }}
+                        >
+                          {copiedToken === t.token ? "Copied!" : "Copy"}
+                        </button>
+                      </div>
+                      {t.deadline && (
+                        <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 4 }}>
+                          Deadline: {new Date(t.deadline).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+
+                <div className="modal-actions" style={{ marginTop: 16 }}>
+                  <button className="btn btn-ghost" onClick={() => setTalentEventId(null)}>Close</button>
                 </div>
               </div>
             </div>
