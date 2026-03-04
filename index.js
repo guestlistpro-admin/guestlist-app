@@ -635,6 +635,217 @@ app.get("/", (req, res) => {
 });
 
 // ============================================================
+// TALENT / TEAM GUEST LIST ALLOCATIONS
+// ============================================================
+
+const crypto = require("crypto");
+
+// --- Create talent allocation for an event ---
+app.post("/api/events/:eventId/talent", requireAdmin, async (req, res) => {
+  const { eventId } = req.params;
+  const { name, max_guests, deadline } = req.body;
+  if (!name || !max_guests) return res.status(400).json({ error: "name and max_guests are required" });
+
+  const token = crypto.randomBytes(16).toString("hex");
+
+  const { data, error } = await supabase
+    .from("talent_allocations")
+    .insert({
+      event_id: eventId,
+      name: name.trim(),
+      max_guests: parseInt(max_guests),
+      deadline: deadline || null,
+      token,
+    })
+    .select()
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// --- List talent allocations for an event ---
+app.get("/api/events/:eventId/talent", async (req, res) => {
+  const { eventId } = req.params;
+  const { data, error } = await supabase
+    .from("talent_allocations")
+    .select("*")
+    .eq("event_id", eventId)
+    .order("created_at", { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+// --- Update talent allocation ---
+app.patch("/api/events/:eventId/talent/:id", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const allowed = ["name", "max_guests", "deadline"];
+  const updates = {};
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) updates[key] = req.body[key];
+  }
+  const { data, error } = await supabase
+    .from("talent_allocations")
+    .update(updates)
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// --- Delete talent allocation (and their submitted guests) ---
+app.delete("/api/events/:eventId/talent/:id", requireAdmin, async (req, res) => {
+  const { id, eventId } = req.params;
+  // Get the allocation to find the talent name for deleting tagged guests
+  const { data: alloc } = await supabase
+    .from("talent_allocations")
+    .select("name")
+    .eq("id", id)
+    .single();
+  if (alloc) {
+    const tag = `Guest of ${alloc.name}`;
+    // Delete guests tagged with this talent's tag
+    const { data: taggedGuests } = await supabase
+      .from("guests")
+      .select("id, tags")
+      .eq("event_id", eventId);
+    if (taggedGuests) {
+      const idsToDelete = taggedGuests
+        .filter((g) => (g.tags || []).includes(tag))
+        .map((g) => g.id);
+      if (idsToDelete.length > 0) {
+        await supabase.from("guests").delete().in("id", idsToDelete);
+      }
+    }
+  }
+  const { error } = await supabase.from("talent_allocations").delete().eq("id", id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// --- Public: Get invite details by token ---
+app.get("/api/invite/:token", async (req, res) => {
+  const { token } = req.params;
+  const { data: alloc, error } = await supabase
+    .from("talent_allocations")
+    .select("*, events(id, name, date, is_active)")
+    .eq("token", token)
+    .single();
+  if (error || !alloc) return res.status(404).json({ error: "Invite not found" });
+
+  // Get currently submitted guests for this allocation
+  const { data: currentGuests } = await supabase
+    .from("guests")
+    .select("id, name")
+    .eq("event_id", alloc.event_id)
+    .eq("is_primary", true)
+    .contains("tags", [`Guest of ${alloc.name}`]);
+
+  res.json({
+    id: alloc.id,
+    name: alloc.name,
+    max_guests: alloc.max_guests,
+    deadline: alloc.deadline || (alloc.events?.date ? alloc.events.date + "T00:00:00" : null),
+    event_name: alloc.events?.name || "Event",
+    event_date: alloc.events?.date || null,
+    event_active: alloc.events?.is_active || false,
+    current_guests: (currentGuests || []).map((g) => ({ id: g.id, name: g.name })),
+  });
+});
+
+// --- Public: Submit/update guest list via invite token ---
+app.post("/api/invite/:token/guests", async (req, res) => {
+  const { token } = req.params;
+  const { guests } = req.body; // Array of { name } objects
+
+  if (!Array.isArray(guests)) return res.status(400).json({ error: "guests array is required" });
+
+  // Look up allocation
+  const { data: alloc } = await supabase
+    .from("talent_allocations")
+    .select("*, events(id, name, date, is_active)")
+    .eq("token", token)
+    .single();
+  if (!alloc) return res.status(404).json({ error: "Invite not found" });
+
+  // Check deadline
+  const deadline = alloc.deadline || (alloc.events?.date ? alloc.events.date + "T00:00:00" : null);
+  if (deadline && new Date() > new Date(deadline)) {
+    return res.status(403).json({ error: "The deadline for submitting your guest list has passed." });
+  }
+
+  // Check max guests
+  if (guests.length > alloc.max_guests) {
+    return res.status(400).json({ error: `You can add up to ${alloc.max_guests} guests.` });
+  }
+
+  const tag = `Guest of ${alloc.name}`;
+  const eventId = alloc.event_id;
+
+  // Remove all previously submitted guests for this allocation
+  const { data: existingGuests } = await supabase
+    .from("guests")
+    .select("id, tags")
+    .eq("event_id", eventId)
+    .eq("is_primary", true);
+
+  if (existingGuests) {
+    const idsToRemove = existingGuests
+      .filter((g) => (g.tags || []).includes(tag))
+      .map((g) => g.id);
+    if (idsToRemove.length > 0) {
+      // Also remove their plus-ones
+      for (const gId of idsToRemove) {
+        const { data: guest } = await supabase
+          .from("guests")
+          .select("name")
+          .eq("id", gId)
+          .single();
+        if (guest) {
+          await supabase
+            .from("guests")
+            .delete()
+            .eq("event_id", eventId)
+            .eq("primary_guest_name", guest.name)
+            .eq("is_primary", false);
+        }
+      }
+      await supabase.from("guests").delete().in("id", idsToRemove);
+    }
+  }
+
+  // Insert new guests
+  if (guests.length > 0) {
+    const rows = guests
+      .filter((g) => g.name && g.name.trim())
+      .map((g) => ({
+        event_id: eventId,
+        name: g.name.trim(),
+        is_primary: true,
+        primary_guest_name: null,
+        tags: [tag],
+        notes: null,
+        is_vip: false,
+        is_checked_in: false,
+        is_duplicate_flag: false,
+      }));
+
+    if (rows.length > 0) {
+      const { error: insertErr } = await supabase.from("guests").insert(rows);
+      if (insertErr) return res.status(500).json({ error: insertErr.message });
+    }
+  }
+
+  res.json({ success: true, count: guests.filter((g) => g.name && g.name.trim()).length });
+});
+
+// --- Serve the public invite page ---
+app.get("/invite/:token", (req, res) => {
+  res.send(INVITE_PAGE_HTML);
+});
+
+// ============================================================
 // REST API ROUTES
 // ============================================================
 
@@ -1132,6 +1343,254 @@ app.get("/api/events/:eventId/stats", async (req, res) => {
     duplicates: guests.filter((g) => g.is_duplicate_flag).length,
   });
 });
+
+// ============================================================
+// INVITE PAGE HTML TEMPLATE
+// ============================================================
+const INVITE_PAGE_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0a0a0b" />
+  <title>Guest List Invite</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0b; --surface: #141416; --surface-2: #1c1c20; --surface-3: #252529;
+      --border: #2a2a30; --text: #e8e8ec; --text-dim: #8888a0; --text-faint: #55556a;
+      --accent: #c8ff3e; --accent-dim: #a0cc32; --danger: #ff4466; --success: #3eff8b;
+      --radius: 12px; --radius-sm: 8px;
+      --font: 'DM Sans', -apple-system, sans-serif; --mono: 'Space Mono', monospace;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; -webkit-font-smoothing: antialiased; }
+    .app { max-width: 520px; margin: 0 auto; padding: 24px 16px; min-height: 100vh; }
+    .header { text-align: center; margin-bottom: 32px; }
+    .header h1 { font-family: var(--mono); font-size: 18px; color: var(--accent); letter-spacing: -0.5px; margin-bottom: 4px; }
+    .header .event-name { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+    .header .event-meta { font-size: 13px; color: var(--text-dim); }
+    .header .deadline { display: inline-block; margin-top: 8px; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 16px; }
+    .deadline.open { background: rgba(62,255,139,0.1); color: var(--success); }
+    .deadline.closed { background: rgba(255,68,102,0.12); color: var(--danger); }
+    .counter { text-align: center; margin-bottom: 20px; font-family: var(--mono); font-size: 14px; color: var(--text-dim); }
+    .counter .num { color: var(--accent); font-weight: 700; font-size: 18px; }
+    .guest-inputs { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+    .guest-row-input { display: flex; gap: 8px; align-items: center; }
+    .guest-row-input .idx { font-family: var(--mono); font-size: 12px; color: var(--text-faint); min-width: 20px; text-align: right; }
+    .guest-row-input input {
+      flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 12px 14px; font-family: var(--font); font-size: 15px; color: var(--text); outline: none; transition: border-color 0.2s;
+    }
+    .guest-row-input input:focus { border-color: var(--accent); }
+    .guest-row-input input::placeholder { color: var(--text-faint); }
+    .guest-row-input .remove-btn {
+      background: none; border: 1px solid var(--border); color: var(--text-faint); width: 32px; height: 32px;
+      border-radius: 6px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+    }
+    .guest-row-input .remove-btn:hover { border-color: var(--danger); color: var(--danger); }
+    .actions { display: flex; flex-direction: column; gap: 8px; }
+    .btn {
+      background: var(--accent); color: var(--bg); border: none; border-radius: var(--radius-sm);
+      padding: 14px 18px; font-family: var(--font); font-size: 15px; font-weight: 700; cursor: pointer; transition: all 0.15s; text-align: center;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .btn-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+    .btn-ghost:hover { border-color: var(--text-dim); color: var(--text); }
+    .status-msg { text-align: center; padding: 12px; border-radius: var(--radius-sm); font-size: 13px; margin-top: 12px; }
+    .status-msg.success { background: rgba(62,255,139,0.1); color: var(--success); }
+    .status-msg.error { background: rgba(255,68,102,0.1); color: var(--danger); }
+    .loading { text-align: center; padding: 60px 20px; color: var(--text-dim); }
+    .closed-msg { text-align: center; padding: 40px 20px; }
+    .closed-msg .icon { font-size: 40px; margin-bottom: 12px; }
+    .closed-msg p { color: var(--text-dim); font-size: 14px; line-height: 1.6; }
+    .saved-label { font-size: 11px; color: var(--text-faint); text-align: center; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    const API_URL = window.location.origin;
+    const TOKEN = window.location.pathname.split("/invite/")[1];
+
+    let invite = null;
+    let guestNames = [];
+    let saving = false;
+    let statusMsg = null;
+    let statusType = "";
+    let loaded = false;
+
+    async function loadInvite() {
+      try {
+        const res = await fetch(API_URL + "/api/invite/" + TOKEN);
+        if (!res.ok) { document.getElementById("root").innerHTML = '<div class="loading">Invite not found.</div>'; return; }
+        invite = await res.json();
+        if (invite.current_guests && invite.current_guests.length > 0) {
+          guestNames = invite.current_guests.map(function(g) { return g.name; });
+        } else {
+          guestNames = [""];
+        }
+        loaded = true;
+        render();
+      } catch(e) {
+        document.getElementById("root").innerHTML = '<div class="loading">Failed to load invite.</div>';
+      }
+    }
+
+    function isDeadlinePassed() {
+      if (!invite.deadline) return false;
+      return new Date() > new Date(invite.deadline);
+    }
+
+    function formatDate(d) {
+      if (!d) return "";
+      var date = new Date(d);
+      return date.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+    }
+
+    function formatDeadline(d) {
+      if (!d) return "No deadline";
+      var date = new Date(d);
+      var now = new Date();
+      var diff = date - now;
+      var days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+      var formatted = date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+      var time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      if (diff < 0) return "Closed " + formatted;
+      if (days <= 1) return "Due today by " + time;
+      if (days <= 3) return "Due " + formatted + " at " + time;
+      return "Due " + formatted;
+    }
+
+    function addRow() {
+      if (guestNames.length >= invite.max_guests) return;
+      guestNames.push("");
+      render();
+      // Focus the new input
+      setTimeout(function() {
+        var inputs = document.querySelectorAll(".guest-row-input input");
+        if (inputs.length > 0) inputs[inputs.length - 1].focus();
+      }, 50);
+    }
+
+    function removeRow(i) {
+      guestNames.splice(i, 1);
+      if (guestNames.length === 0) guestNames.push("");
+      render();
+    }
+
+    function updateName(i, val) {
+      guestNames[i] = val;
+      // Re-render counter only
+      var counter = document.getElementById("counter");
+      var filled = guestNames.filter(function(n) { return n.trim().length > 0; }).length;
+      if (counter) counter.innerHTML = '<span class="num">' + filled + '</span> / ' + invite.max_guests + ' guests';
+    }
+
+    async function saveGuests() {
+      if (saving) return;
+      var names = guestNames.filter(function(n) { return n.trim().length > 0; });
+      if (names.length > invite.max_guests) {
+        statusMsg = "You can only add up to " + invite.max_guests + " guests.";
+        statusType = "error";
+        render();
+        return;
+      }
+      saving = true;
+      statusMsg = null;
+      render();
+      try {
+        var res = await fetch(API_URL + "/api/invite/" + TOKEN + "/guests", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ guests: names.map(function(n) { return { name: n.trim() }; }) })
+        });
+        var data = await res.json();
+        if (res.ok) {
+          statusMsg = names.length === 0 ? "Guest list cleared." : "Saved! " + data.count + " guest" + (data.count === 1 ? "" : "s") + " submitted.";
+          statusType = "success";
+          // Keep empty row if list was cleared
+          if (names.length === 0) guestNames = [""];
+        } else {
+          statusMsg = data.error || "Something went wrong.";
+          statusType = "error";
+        }
+      } catch(e) {
+        statusMsg = "Network error. Please try again.";
+        statusType = "error";
+      }
+      saving = false;
+      render();
+    }
+
+    function render() {
+      if (!loaded) { document.getElementById("root").innerHTML = '<div class="loading">Loading...</div>'; return; }
+      var closed = isDeadlinePassed();
+      var filled = guestNames.filter(function(n) { return n.trim().length > 0; }).length;
+      var html = '<div class="app">';
+      html += '<div class="header">';
+      html += '<h1>GUEST LIST</h1>';
+      html += '<div class="event-name">' + esc(invite.event_name) + '</div>';
+      if (invite.event_date) html += '<div class="event-meta">' + formatDate(invite.event_date) + '</div>';
+      html += '<div class="event-meta" style="margin-top:4px">Invite for <strong>' + esc(invite.name) + '</strong> &mdash; up to ' + invite.max_guests + ' guest' + (invite.max_guests === 1 ? '' : 's') + '</div>';
+      if (invite.deadline) {
+        html += '<div class="deadline ' + (closed ? 'closed' : 'open') + '">' + formatDeadline(invite.deadline) + '</div>';
+      }
+      html += '</div>';
+
+      if (closed) {
+        html += '<div class="closed-msg"><div class="icon">&#x1f512;</div><p>The deadline for this guest list has passed.<br>Contact the event organizer if you need to make changes.</p></div>';
+        if (filled > 0) {
+          html += '<div style="margin-top:24px"><div class="counter">Your submitted guests:</div>';
+          for (var i = 0; i < guestNames.length; i++) {
+            if (guestNames[i].trim()) {
+              html += '<div style="padding:8px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:4px;font-size:14px">' + esc(guestNames[i]) + '</div>';
+            }
+          }
+          html += '</div>';
+        }
+      } else {
+        html += '<div class="counter" id="counter"><span class="num">' + filled + '</span> / ' + invite.max_guests + ' guests</div>';
+        html += '<div class="guest-inputs">';
+        for (var i = 0; i < guestNames.length; i++) {
+          html += '<div class="guest-row-input">';
+          html += '<span class="idx">' + (i + 1) + '.</span>';
+          html += '<input type="text" placeholder="Guest name" value="' + esc(guestNames[i]) + '" oninput="updateName(' + i + ', this.value)" />';
+          if (guestNames.length > 1) {
+            html += '<button class="remove-btn" onclick="removeRow(' + i + ')" title="Remove">&times;</button>';
+          }
+          html += '</div>';
+        }
+        html += '</div>';
+        html += '<div class="actions">';
+        if (guestNames.length < invite.max_guests) {
+          html += '<button class="btn btn-ghost" onclick="addRow()">+ Add another guest</button>';
+        }
+        html += '<button class="btn" onclick="saveGuests()" ' + (saving ? 'disabled' : '') + '>' + (saving ? 'Saving...' : 'Save Guest List') + '</button>';
+        html += '</div>';
+        if (statusMsg) {
+          html += '<div class="status-msg ' + statusType + '">' + esc(statusMsg) + '</div>';
+        }
+        html += '<div class="saved-label">You can come back and edit this list until the deadline.</div>';
+      }
+      html += '</div>';
+      document.getElementById("root").innerHTML = html;
+    }
+
+    function esc(s) {
+      if (!s) return "";
+      var d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    loadInvite();
+  </script>
+</body>
+</html>`;
 
 // ============================================================
 // START SERVER
