@@ -673,6 +673,7 @@
     // ============================================================
     const CONFIG = {
       API_URL: "https://guestlist-app-production.up.railway.app",
+      FRONTEND_URL: "https://guestlistpro.app",
       SUPABASE_URL: "https://wzdqwrckzeletieemiff.supabase.co",
       SUPABASE_ANON_KEY: "sb_publishable_wYlMVDSJJWKEnUxIus7inQ_1gCTfEo8",
       GOOGLE_CLIENT_ID: "473213689707-nj4cqdhsa5ni8cnb8npr30vgk29pku6p.apps.googleusercontent.com",
@@ -1650,7 +1651,7 @@
       };
 
       const copyInviteLink = (token) => {
-        const link = `${CONFIG.API_URL}/invite/${token}`;
+        const link = `${CONFIG.FRONTEND_URL}/invite/${token}`;
         navigator.clipboard.writeText(link).then(() => {
           setCopiedToken(token);
           setTimeout(() => setCopiedToken(null), 2000);
@@ -1864,7 +1865,7 @@
                           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                             <input
                               readOnly
-                              value={`${CONFIG.API_URL}/invite/${t.token}`}
+                              value={`${CONFIG.FRONTEND_URL}/invite/${t.token}`}
                               style={{ flex: 1, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "6px 8px", fontFamily: "var(--mono)", fontSize: 10, color: "var(--text-dim)", outline: "none" }}
                               onClick={(e) => e.target.select()}
                             />

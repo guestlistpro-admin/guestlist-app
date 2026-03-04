@@ -1,0 +1,3 @@
+# Proxy invite pages to Railway backend (which serves the invite HTML + API)
+/invite/*  https://guestlist-app-production.up.railway.app/invite/:splat  200
+/api/*     https://guestlist-app-production.up.railway.app/api/:splat     200
