@@ -1658,6 +1658,15 @@
         });
       };
 
+      const [copiedAll, setCopiedAll] = useState(false);
+      const copyAllInviteLinks = () => {
+        const text = talentList.map((t) => `${t.name}: ${CONFIG.FRONTEND_URL}/invite/${t.token}`).join("\n");
+        navigator.clipboard.writeText(text).then(() => {
+          setCopiedAll(true);
+          setTimeout(() => setCopiedAll(false), 2000);
+        });
+      };
+
       return (
         <div>
           {/* Logged-in admin info */}
@@ -1889,6 +1898,11 @@
                 )}
 
                 <div className="modal-actions" style={{ marginTop: 16 }}>
+                  {talentList.length > 0 && (
+                    <button className="btn btn-ghost" onClick={copyAllInviteLinks} style={{ fontSize: 12 }}>
+                      {copiedAll ? "Copied!" : "Copy All Links"}
+                    </button>
+                  )}
                   <button className="btn btn-ghost" onClick={() => setTalentEventId(null)}>Close</button>
                 </div>
               </div>
