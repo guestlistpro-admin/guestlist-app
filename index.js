@@ -699,9 +699,16 @@ app.patch("/api/events/:eventId/talent/:id", requireAdmin, async (req, res) => {
     if (req.body[key] !== undefined) updates[key] = req.body[key];
   }
 
-  // If name changed, regenerate token so URL reflects the new name
+  // Only regenerate token if the name actually changed
   if (updates.name) {
-    updates.token = generateInviteToken(updates.name);
+    const { data: existing } = await supabase
+      .from("talent_allocations")
+      .select("name")
+      .eq("id", id)
+      .single();
+    if (existing && existing.name !== updates.name) {
+      updates.token = generateInviteToken(updates.name);
+    }
   }
 
   const { data, error } = await supabase
